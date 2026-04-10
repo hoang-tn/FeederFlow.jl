@@ -1,0 +1,11 @@
+! PV Systems for IEEE 13-Bus Feeder
+! Line continuations removed for PowerModelsDistribution OpenDSS parser compatibility.
+
+! Bus 671 — PV: 350 kW, 3-phase
+New PVSystem.PV_671  bus1=671  phases=3  kV=4.16  kVA=350  pmpp=350  pf=1.0  %cutin=0.1  %cutout=0.1
+
+! Bus 675 — PV: 250 kW, 3-phase
+New PVSystem.PV_675  bus1=675  phases=3  kV=4.16  kVA=250  pmpp=250  pf=1.0  %cutin=0.1  %cutout=0.1
+
+! Bus 634 — PV: 250 kW, 3-phase
+New PVSystem.PV_634  bus1=634  phases=3  kV=4.16  kVA=250  pmpp=250  pf=1.0  %cutin=0.1  %cutout=0.1

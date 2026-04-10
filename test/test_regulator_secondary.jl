@@ -1,0 +1,25 @@
+using Test
+using FeederFlow
+
+include("test_support.jl")
+
+@testset "Regulator secondary voltage handling - IEEE123 (general)" begin
+    network = FeederFlow.parse_file(IEEE123_DSS)
+    bundle = FeederFlow.solve_power_flow(network; max_iter = 10, tol = 1e-5)
+
+    # In the general Y-bus path, regulator secondary buses are included directly,
+    # so no post-filled voltages should be needed.
+    secondary = FeederFlow.compute_regulator_secondary_voltages(bundle)
+    @test isempty(secondary)
+
+    for regulator in network.regulators
+        length(regulator.windings) >= 2 || continue
+        sec_winding = regulator.windings[2]
+        for phase in sec_winding.bus.phases
+            bp = BusPhase(sec_winding.bus.bus, phase)
+            @test get(bundle.ybus.all_index, bp, 0) > 0
+            @test haskey(bundle.result.phase_voltages, bp)
+            @test isfinite(bundle.result.phase_voltages[bp])
+        end
+    end
+end
