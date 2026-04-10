@@ -1,6 +1,6 @@
-docs/*
-scripts/*
-tests/*
+docs/
+scripts/
+tests/
 *.log
 *.tmp
 .DS_Store
