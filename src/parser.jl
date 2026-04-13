@@ -1107,7 +1107,7 @@ function parse_pvsystem(object::DSSObject)
         qmin,    # physical value (kvar) — converted to pu after base is known
         parse_float(property_alias(props, "vminpu"), 0.9),
         parse_float(property_alias(props, "vmaxpu"), 1.1),
-        0.0,  # cost_coeff — default zero for PV
+        copy(DEFAULT_PV_COST_COEFF),
         :pv,
         object.provenance,
     )
@@ -1204,7 +1204,7 @@ function build_source(state::DSSState)
         conn_raw === nothing && (conn_raw = property_alias(vprops, "conn"))
     end
     conn = conn_raw === nothing ? :wye : Symbol(lowercase(conn_raw))
-    return SourceSpec(circuit.name, bus.bus, phases, parse_float(basekv_raw), parse_float(pu_raw, 1.0), parse_float(angle_raw, 0.0), conn)
+    return SourceSpec(circuit.name, bus.bus, phases, parse_float(basekv_raw), parse_float(pu_raw, 1.0), parse_float(angle_raw, 0.0), copy(DEFAULT_SOURCE_COST_COEFF), conn)
 end
 
 function infer_base_quantities(source::SourceSpec, transformers::Vector{TransformerDevice})
@@ -1361,7 +1361,7 @@ function convert_generators_to_pu(generators::Vector{GeneratorDevice}, base::Bas
             g.kva_pu / sbase_kva,    # kVA → pu
             g.qmax_pu / sbase_kva,   # kvar → pu
             g.qmin_pu / sbase_kva,   # kvar → pu
-            g.vminpu, g.vmaxpu, g.cost_coeff, g.generator_type, g.provenance,
+            g.vminpu, g.vmaxpu, copy(g.cost_coeff), g.generator_type, g.provenance,
         )
         for g in generators
     ]

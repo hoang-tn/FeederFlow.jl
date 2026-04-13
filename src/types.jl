@@ -122,10 +122,12 @@ struct BaseQuantities
 end
 
 """
-    SourceSpec(name, bus, phases, basekv, pu, angle_deg)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg[, cost_coeff[, conn]])
 
 Specification of the feeder source/slack definition.
 """
+const DEFAULT_SOURCE_COST_COEFF = Float64[1.0, 100.0, 0.0]
+
 struct SourceSpec
     name::String
     bus::String
@@ -133,11 +135,35 @@ struct SourceSpec
     basekv::Float64
     pu::Float64
     angle_deg::Float64
+    cost_coeff::Vector{Float64}
     conn::Symbol  # :wye or :delta
 end
 
 function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64)
-    SourceSpec(name, bus, phases, basekv, pu, 0.0, :wye)
+    SourceSpec(name, bus, phases, basekv, pu, 0.0, copy(DEFAULT_SOURCE_COST_COEFF), :wye)
+end
+
+function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64, angle_deg::Float64)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg, copy(DEFAULT_SOURCE_COST_COEFF), :wye)
+end
+
+function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64, angle_deg::Float64, conn::Symbol)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg, copy(DEFAULT_SOURCE_COST_COEFF), conn)
+end
+
+function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64,
+                    angle_deg::Float64, cost_coeff::Real, conn::Symbol)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg, Float64[Float64(cost_coeff), 0.0, 0.0], conn)
+end
+
+function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64,
+                    angle_deg::Float64, cost_coeff::Real)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg, cost_coeff, :wye)
+end
+
+function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64,
+                    angle_deg::Float64, cost_coeff::AbstractVector{<:Real}, conn::Symbol)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg, Float64.(cost_coeff), conn)
 end
 
 """
@@ -378,10 +404,12 @@ Fields:
 - `qmax_pu`: Maximum reactive power injection (pu on Sbase)
 - `qmin_pu`: Minimum reactive power injection (pu on Sbase)
 - `vminpu`, `vmaxpu`: Voltage operating limits (pu)
-- `cost_coeff`: Objective function weight (\$/kWh or similar)
+- `cost_coeff`: Objective function coefficients for the feeder cost curve
 - `generator_type`: `:pv`, `:wind`, `:diesel`, `:battery`, etc.
 - `provenance`: Source file information (contains physical values in original_properties)
 """
+const DEFAULT_PV_COST_COEFF = Float64[0.1, 5.0, 0.0]
+
 struct GeneratorDevice
     name::String
     bus::TerminalSpec
@@ -395,9 +423,33 @@ struct GeneratorDevice
     qmin_pu::Float64
     vminpu::Float64
     vmaxpu::Float64
-    cost_coeff::Float64
+    cost_coeff::Vector{Float64}
     generator_type::Symbol
     provenance::Provenance
+end
+
+function GeneratorDevice(name::String, bus::TerminalSpec, phases::Vector{Int}, conn::Symbol,
+                         kv::Float64, p_pu::Float64, pf::Float64, kva_pu::Float64,
+                         qmax_pu::Float64, qmin_pu::Float64, vminpu::Float64, vmaxpu::Float64,
+                         generator_type::Symbol, provenance::Provenance)
+    GeneratorDevice(name, bus, phases, conn, kv, p_pu, pf, kva_pu, qmax_pu, qmin_pu, vminpu, vmaxpu,
+                    Float64[0.0, 0.0, 0.0], generator_type, provenance)
+end
+
+function GeneratorDevice(name::String, bus::TerminalSpec, phases::Vector{Int}, conn::Symbol,
+                         kv::Float64, p_pu::Float64, pf::Float64, kva_pu::Float64,
+                         qmax_pu::Float64, qmin_pu::Float64, vminpu::Float64, vmaxpu::Float64,
+                         cost_coeff::Real, generator_type::Symbol, provenance::Provenance)
+    GeneratorDevice(name, bus, phases, conn, kv, p_pu, pf, kva_pu, qmax_pu, qmin_pu, vminpu, vmaxpu,
+                    Float64[Float64(cost_coeff), 0.0, 0.0], generator_type, provenance)
+end
+
+function GeneratorDevice(name::String, bus::TerminalSpec, phases::Vector{Int}, conn::Symbol,
+                         kv::Float64, p_pu::Float64, pf::Float64, kva_pu::Float64,
+                         qmax_pu::Float64, qmin_pu::Float64, vminpu::Float64, vmaxpu::Float64,
+                         cost_coeff::AbstractVector{<:Real}, generator_type::Symbol, provenance::Provenance)
+    GeneratorDevice(name, bus, phases, conn, kv, p_pu, pf, kva_pu, qmax_pu, qmin_pu, vminpu, vmaxpu,
+                    Float64.(cost_coeff), generator_type, provenance)
 end
 
 """
