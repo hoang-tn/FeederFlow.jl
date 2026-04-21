@@ -37,6 +37,55 @@ function branch_powers(load::LoadDevice, pair_count::Int, base::BaseQuantities)
     return fill(total / pair_count, pair_count)
 end
 
+function build_load_reference_vectors(network::NetworkModel, ybus::YBusModel, noload::NoLoadResult)
+    n = length(ybus.network_order)
+    p_load_ref = zeros(Float64, n)
+    q_load_ref = zeros(Float64, n)
+
+    for load in network.loads
+        pairs = branch_pairs(load)
+        isempty(pairs) && continue
+        powers = branch_powers(load, length(pairs), network.base)
+
+        for (pair, sbranch) in zip(pairs, powers)
+            p_idx = lookup_node_index(ybus, load.bus.bus, pair[1])
+            p_idx == 0 && continue
+
+            vp = get(noload.phase_voltages, BusPhase(load.bus.bus, pair[1]), nothing)
+            vp === nothing && continue
+
+            if pair[2] == 0
+                iszero(vp) && continue
+                current = conj(sbranch / vp)
+                terminal_power = vp * conj(current)
+                p_load_ref[p_idx] += real(terminal_power)
+                q_load_ref[p_idx] += imag(terminal_power)
+                continue
+            end
+
+            q_idx = lookup_node_index(ybus, load.bus.bus, pair[2])
+            q_idx == 0 && continue
+
+            vq = get(noload.phase_voltages, BusPhase(load.bus.bus, pair[2]), nothing)
+            vq === nothing && continue
+
+            branch_voltage = vp - vq
+            iszero(branch_voltage) && continue
+
+            current = conj(sbranch / branch_voltage)
+            terminal_power_p = vp * conj(current)
+            terminal_power_q = -vq * conj(current)
+
+            p_load_ref[p_idx] += real(terminal_power_p)
+            q_load_ref[p_idx] += imag(terminal_power_p)
+            p_load_ref[q_idx] += real(terminal_power_q)
+            q_load_ref[q_idx] += imag(terminal_power_q)
+        end
+    end
+
+    return p_load_ref, q_load_ref
+end
+
 function generator_branch_pairs(generator::GeneratorDevice)
     if generator.conn == :wye
         return [(phase, 0) for phase in generator.bus.phases]

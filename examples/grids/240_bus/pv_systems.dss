@@ -1,0 +1,32 @@
+! PV Systems for IEEE 240-Bus Feeder
+! 22 PV units at selected three-phase low-voltage service buses.
+! Feeder nominal service voltage: 0.208 kV (line-to-line, wye service).
+! Total PV capacity: 420 kW over 1.176 MW nominal load (~35.7% penetration).
+
+! Feeder A
+New PVSystem.PV_1003  bus1=T_bus1003_L  phases=3  kV=0.208  kVA=20   pmpp=20  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_1004  bus1=T_bus1004_L  phases=3  kV=0.208  kVA=15   pmpp=15  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_1005  bus1=T_bus1005_L  phases=3  kV=0.208  kVA=12   pmpp=12  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_1008  bus1=T_bus1008_L  phases=3  kV=0.208  kVA=20   pmpp=20  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_1009  bus1=T_bus1009_L  phases=3  kV=0.208  kVA=22   pmpp=22  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_1010  bus1=T_bus1010_L  phases=3  kV=0.208  kVA=15   pmpp=15  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+
+! Feeder B
+New PVSystem.PV_2002  bus1=T_bus2002_L  phases=3  kV=0.208  kVA=40   pmpp=40  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_2003  bus1=T_bus2003_L  phases=3  kV=0.208  kVA=20   pmpp=20  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_2005  bus1=T_bus2005_L  phases=3  kV=0.208  kVA=18   pmpp=18  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_2011  bus1=T_bus2011_L  phases=3  kV=0.208  kVA=12   pmpp=12  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_2040  bus1=T_bus2040_L  phases=3  kV=0.208  kVA=100  pmpp=100 irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_2042  bus1=T_bus2042_L  phases=3  kV=0.208  kVA=12   pmpp=12  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_2052  bus1=T_bus2052_L  phases=3  kV=0.208  kVA=55   pmpp=55  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_2058  bus1=T_bus2058_L  phases=3  kV=0.208  kVA=40   pmpp=40  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+
+! Feeder C
+New PVSystem.PV_3002  bus1=T_bus3002_L  phases=3  kV=0.208  kVA=28   pmpp=28  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_3004  bus1=T_bus3004_L  phases=3  kV=0.208  kVA=8    pmpp=8   irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_3007  bus1=T_bus3007_L  phases=3  kV=0.208  kVA=20   pmpp=20  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_3031  bus1=T_bus3031_L  phases=3  kV=0.208  kVA=8    pmpp=8   irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_3035  bus1=T_bus3035_L  phases=3  kV=0.208  kVA=15   pmpp=15  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_3047  bus1=T_bus3047_L  phases=3  kV=0.208  kVA=15   pmpp=15  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_3077  bus1=T_bus3077_L  phases=3  kV=0.208  kVA=55   pmpp=55  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_3078  bus1=T_bus3078_L  phases=3  kV=0.208  kVA=12   pmpp=12  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1

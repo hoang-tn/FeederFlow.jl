@@ -1,0 +1,22 @@
+! PV Systems for European 906-Bus LV Feeder
+! 12 rooftop-scale single-phase PV units at 0.23 kV buses.
+! Each PV is sized at 0.5 kW against a 1 kW nominal local load.
+! Total PV capacity: 6.0 kW over 55 kW nominal load (~10.9% penetration).
+
+! Phase 1 PV systems
+New PVSystem.PV_34_1    bus1=34.1    phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_225_1   bus1=225.1   phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_502_1   bus1=502.1   phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_861_1   bus1=861.1   phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+
+! Phase 2 PV systems
+New PVSystem.PV_83_2    bus1=83.2    phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_314_2   bus1=314.2   phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_676_2   bus1=676.2   phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_886_2   bus1=886.2   phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+
+! Phase 3 PV systems
+New PVSystem.PV_208_3   bus1=208.3   phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_337_3   bus1=337.3   phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_619_3   bus1=619.3   phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1
+New PVSystem.PV_835_3   bus1=835.3   phases=1  kV=0.23  kVA=0.5  pmpp=0.5  irradiance=1.0  pf=1.0  %cutin=0.1  %cutout=0.1

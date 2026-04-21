@@ -20,6 +20,15 @@ function source_slack(source::SourceSpec, base::BaseQuantities)
     return scale .* balanced_slack() .* cis(deg2rad(source.angle_deg))
 end
 
+const SOURCE_INTERNAL_SLACK_PREFIX = "__ff_source_internal__"
+
+source_internal_slack_bus(source::SourceSpec) = string(SOURCE_INTERNAL_SLACK_PREFIX, source.bus)
+is_source_internal_slack_bus(bus::AbstractString) = startswith(bus, SOURCE_INTERNAL_SLACK_PREFIX)
+
+function source_has_series_impedance(source::SourceSpec; atol::Float64 = 0.0)
+    return abs(source.r1) > atol || abs(source.x1) > atol || abs(source.r0) > atol || abs(source.x0) > atol
+end
+
 normalize_name(value) = lowercase(strip(replace(dss_string(value), "\"" => "", "'" => "")))
 
 const DSS_RPN_BINARY_OPERATORS = Dict(
@@ -129,6 +138,15 @@ function ordered_unique_phases(phases::Vector{Int})
     return ordered
 end
 
+is_modeled_phase(phase::Int) = 1 <= phase <= 3
+
+function modeled_phases(phases::Vector{Int}; preserve_order::Bool = false)
+    active = [phase for phase in phases if is_modeled_phase(phase)]
+    return preserve_order ? ordered_unique_phases(active) : sort!(unique(active))
+end
+
+modeled_phase_count(phases::Vector{Int}) = length(modeled_phases(phases))
+
 function terminal(bus::AbstractString, phases::Vector{Int}; preserve_order::Bool = false)
     cleaned = preserve_order ? ordered_unique_phases(phases) : sort!(unique(phases))
     TerminalSpec(normalize_name(bus), cleaned)
@@ -147,16 +165,21 @@ function parse_bus_terminal(value::Any; nphases::Union{Nothing,Int} = nothing, p
     return terminal(bus, phases; preserve_order)
 end
 
-function add_bus_phases!(acc::Dict{String,Set{Int}}, term::TerminalSpec)
-    set = get!(acc, term.bus) do
-    """
-        source_slack(source, base)
+"""
+    add_bus_phases!(acc, term; include_neutral=false)
 
-    Return the source slack phasors scaled to the system base and source angle.
-    """
+Collect modeled phase conductors from a terminal into a bus phase set dictionary.
+Neutral/ground conductors such as OpenDSS node 0, and unsupported conductor
+numbers outside 1:3, are not represented as independent Y-bus nodes.
+"""
+function add_bus_phases!(acc::Dict{String,Set{Int}}, term::TerminalSpec; include_neutral::Bool = false)
+    include_neutral && @warn "Explicit neutral nodes are not modeled in the 3-phase Y-bus; retaining phases 1:3 only." maxlog = 1
+    set = get!(acc, term.bus) do
         Set{Int}()
     end
-    foreach(phase -> push!(set, phase), term.phases)
+    for phase in modeled_phases(term.phases; preserve_order = true)
+        push!(set, phase)
+    end
     return acc
 end
 
@@ -187,6 +210,8 @@ end
 phase_unit(phase::Int) = SVector{3,Float64}(phase == 1 ? 1.0 : 0.0, phase == 2 ? 1.0 : 0.0, phase == 3 ? 1.0 : 0.0)
 
 function delta_incidence(phases::Vector{Int})
+    phases = modeled_phases(phases; preserve_order = true)
+    isempty(phases) && error("Unsupported delta phase set: $phases")
     if length(phases) == 3
         return ComplexF64[
             1 -1 0
@@ -209,8 +234,22 @@ function delta_incidence(phases::Vector{Int})
 end
 
 function wye_incidence(phases::Vector{Int})
-    mat = zeros(ComplexF64, length(phases), 3)
-    for (row, phase) in enumerate(phases)
+    active = modeled_phases(phases; preserve_order = true)
+    isempty(active) && error("Unsupported wye phase set: $phases")
+
+    # A single-phase terminal may be written as `.phase.0` or `.0.phase`.
+    # The latter reverses winding polarity, which matters for center-tapped
+    # secondary transformers.
+    if length(active) == 1 && length(phases) == 2 && any(==(0), phases)
+        phase = only(active)
+        sign = first(phases) == phase ? 1.0 : -1.0
+        mat = zeros(ComplexF64, 1, 3)
+        mat[1, phase] = sign
+        return mat
+    end
+
+    mat = zeros(ComplexF64, length(active), 3)
+    for (row, phase) in enumerate(active)
         mat[row, phase] = 1
     end
     return mat
@@ -222,7 +261,7 @@ function kv_to_vbase(kv::Float64, phases::Vector{Int}, conn::Symbol=:wye)
         return kv * 1000
     end
     # For wye connections: 3-phase uses LL kv (divide by sqrt(3)), single-phase uses LN kv directly
-    return length(phases) == 3 ? kv * 1000 / sqrt(3) : kv * 1000
+    return modeled_phase_count(phases) == 3 ? kv * 1000 / sqrt(3) : kv * 1000
 end
 
 """
@@ -240,10 +279,11 @@ function transformer_winding_voltage(winding)
     if winding.conn == :delta
         return voltage
     end
-    return length(winding.bus.phases) == 3 ? voltage / sqrt(3) : voltage
+    return modeled_phase_count(winding.bus.phases) == 3 ? voltage / sqrt(3) : voltage
 end
 
 function phase_pairs(phases::Vector{Int})
+    phases = modeled_phases(phases; preserve_order = true)
     if length(phases) == 3
         return [(1, 2), (2, 3), (3, 1)]
     elseif length(phases) == 2

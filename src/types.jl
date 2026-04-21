@@ -137,23 +137,27 @@ struct SourceSpec
     angle_deg::Float64
     cost_coeff::Vector{Float64}
     conn::Symbol  # :wye or :delta
+    r1::Float64
+    x1::Float64
+    r0::Float64
+    x0::Float64
 end
 
 function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64)
-    SourceSpec(name, bus, phases, basekv, pu, 0.0, copy(DEFAULT_SOURCE_COST_COEFF), :wye)
+    SourceSpec(name, bus, phases, basekv, pu, 0.0, copy(DEFAULT_SOURCE_COST_COEFF), :wye, 0.0, 0.0, 0.0, 0.0)
 end
 
 function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64, angle_deg::Float64)
-    SourceSpec(name, bus, phases, basekv, pu, angle_deg, copy(DEFAULT_SOURCE_COST_COEFF), :wye)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg, copy(DEFAULT_SOURCE_COST_COEFF), :wye, 0.0, 0.0, 0.0, 0.0)
 end
 
 function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64, angle_deg::Float64, conn::Symbol)
-    SourceSpec(name, bus, phases, basekv, pu, angle_deg, copy(DEFAULT_SOURCE_COST_COEFF), conn)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg, copy(DEFAULT_SOURCE_COST_COEFF), conn, 0.0, 0.0, 0.0, 0.0)
 end
 
 function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64,
                     angle_deg::Float64, cost_coeff::Real, conn::Symbol)
-    SourceSpec(name, bus, phases, basekv, pu, angle_deg, Float64[Float64(cost_coeff), 0.0, 0.0], conn)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg, Float64[Float64(cost_coeff), 0.0, 0.0], conn, 0.0, 0.0, 0.0, 0.0)
 end
 
 function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64,
@@ -163,7 +167,14 @@ end
 
 function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64,
                     angle_deg::Float64, cost_coeff::AbstractVector{<:Real}, conn::Symbol)
-    SourceSpec(name, bus, phases, basekv, pu, angle_deg, Float64.(cost_coeff), conn)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg, Float64.(cost_coeff), conn, 0.0, 0.0, 0.0, 0.0)
+end
+
+function SourceSpec(name::String, bus::String, phases::Vector{Int}, basekv::Float64, pu::Float64,
+                    angle_deg::Float64, cost_coeff::AbstractVector{<:Real}, conn::Symbol,
+                    r1::Real, x1::Real, r0::Real, x0::Real)
+    SourceSpec(name, bus, phases, basekv, pu, angle_deg, Float64.(cost_coeff), conn,
+               Float64(r1), Float64(x1), Float64(r0), Float64(x0))
 end
 
 """

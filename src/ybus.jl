@@ -7,14 +7,16 @@ order/index maps as a `YBusModel`.
 function build_y(network::NetworkModel; regulator_model::Symbol = :nonideal, epsilon::Float64 = 1e-6)
     excluded = excluded_buses(network)
     include_shunt = true  # General DSS behavior includes shunt capacitance
+    include_source_series_impedance = source_has_series_impedance(network.source)
+    slack_bus_name = include_source_series_impedance ? source_internal_slack_bus(network.source) : network.slack_bus
 
-    slack_order = BusPhase[BusPhase(network.slack_bus, phase) for phase in sort(network.source.phases)]
+    slack_order = BusPhase[BusPhase(slack_bus_name, phase) for phase in sort(network.source.phases)]
     network_order = BusPhase[]
     available_phases = Dict{String,Vector{Int}}()
     for bus in network.buses
         bus.name in excluded && continue
         available_phases[bus.name] = copy(bus.phases)
-        bus.name == network.slack_bus && continue
+        !include_source_series_impedance && bus.name == network.slack_bus && continue
         for phase in sort(bus.phases)
             push!(network_order, BusPhase(bus.name, phase))
         end
@@ -43,6 +45,10 @@ function build_y(network::NetworkModel; regulator_model::Symbol = :nonideal, eps
     for capacitor in network.capacitors
         capacitor.bus.bus in excluded && continue
         stamp_capacitor!(rows, cols, vals, all_index, network.base, capacitor)
+    end
+
+    if include_source_series_impedance
+        stamp_source_impedance!(rows, cols, vals, all_index, network; epsilon)
     end
 
     total = length(all_order)
@@ -104,10 +110,68 @@ end
 
 function lift_phase_block(local_block::Matrix{ComplexF64}, phases::Vector{Int})
     block = zeros(ComplexF64, 3, 3)
-    for (i_local, i_global) in enumerate(phases), (j_local, j_global) in enumerate(phases)
-        block[i_global, j_global] = local_block[i_local, j_local]
+    active = modeled_phases(phases; preserve_order = true)
+    for (i_local, i_global) in enumerate(active)
+        i_local > size(local_block, 1) && continue
+        for (j_local, j_global) in enumerate(active)
+            j_local > size(local_block, 2) && continue
+            block[i_global, j_global] = local_block[i_local, j_local]
+        end
     end
     return block
+end
+
+function source_bus_vbase(network::NetworkModel)
+    if haskey(network.buses, network.source.bus)
+        vbase = network.buses[network.source.bus].vbase
+        if isfinite(vbase) && vbase > 0
+            return vbase
+        end
+    end
+    return kv_to_vbase(network.source.basekv, network.source.phases)
+end
+
+function source_impedance_local_matrix_pu(network::NetworkModel)
+    active = modeled_phases(network.source.phases; preserve_order = true)
+    isempty(active) && return active, zeros(ComplexF64, 0, 0)
+
+    # Single-global-base policy: source sequence impedances are stamped on the
+    # same system impedance base used by lines/transformers.
+    zbase_source = network.base.Zbase
+    z1 = complex(network.source.r1, network.source.x1) / zbase_source
+    z0 = complex(network.source.r0, network.source.x0) / zbase_source
+
+    local_z = if length(active) == 3
+        sequence_to_phase_matrix(z1, z0)
+    else
+        Matrix{ComplexF64}(Diagonal(fill(z1, length(active))))
+    end
+    return active, local_z
+end
+
+function stamp_source_impedance!(rows, cols, vals, indexmap::Dict{BusPhase,Int}, network::NetworkModel; epsilon::Float64 = 1e-9)
+    source_has_series_impedance(network.source) || return
+    active, local_z = source_impedance_local_matrix_pu(network)
+    isempty(active) && return
+    maximum(abs.(local_z)) <= eps(Float64) && return
+
+    regularized = local_z + Matrix{ComplexF64}(Diagonal(fill(ComplexF64(epsilon, 0.0), size(local_z, 1))))
+    local_y = try
+        rcond(local_z) < 1e-12 ? pinv(regularized) : inv(local_z)
+    catch
+        pinv(regularized)
+    end
+
+    source_term = terminal(network.source.bus, active; preserve_order = true)
+    slack_term = terminal(source_internal_slack_bus(network.source), active; preserve_order = true)
+    idx_source = terminal_indices(indexmap, source_term)
+    idx_slack = terminal_indices(indexmap, slack_term)
+    y_block = lift_phase_block(local_y, active)
+
+    stamp_selected_block!(rows, cols, vals, idx_source, idx_source, y_block)
+    stamp_selected_block!(rows, cols, vals, idx_slack, idx_slack, y_block)
+    stamp_selected_block!(rows, cols, vals, idx_source, idx_slack, -y_block)
+    stamp_selected_block!(rows, cols, vals, idx_slack, idx_source, -y_block)
 end
 
 """
@@ -174,7 +238,7 @@ term is injected to avoid singularity in the admittance.
 function transformer_series_impedance(transformer::TransformerDevice, base::BaseQuantities; epsilon::Float64 = 1e-5)
     winding = first(transformer.windings)
     downstream = length(transformer.windings) >= 2 ? transformer.windings[end] : winding
-    resistance = sum(w.resistance for w in transformer.windings)
+    resistance = winding.resistance + downstream.resistance
     zpercent = complex(resistance, transformer.xhl_percent) / 100
     rated = winding_rated_va(winding)
     # Use transformer_winding_voltage to correctly handle line-line vs line-neutral
@@ -197,7 +261,7 @@ which applies a 3x multiplier to match the MATLAB benchmark conventions.
 function regulator_series_impedance(transformer::TransformerDevice, base::BaseQuantities; epsilon::Float64 = 1e-5)
     winding = first(transformer.windings)
     downstream = length(transformer.windings) >= 2 ? transformer.windings[end] : winding
-    resistance = sum(w.resistance for w in transformer.windings)
+    resistance = winding.resistance + downstream.resistance
     zpercent = complex(resistance, transformer.xhl_percent) / 100
     rated = winding_rated_va(winding)
     # Use transformer_winding_voltage to correctly handle line-line vs line-neutral
@@ -210,7 +274,7 @@ end
 function open_delta_regulator_series_impedance(transformer::TransformerDevice, base::BaseQuantities; epsilon::Float64 = 1e-5)
     winding = first(transformer.windings)
     downstream = length(transformer.windings) >= 2 ? transformer.windings[end] : winding
-    resistance = sum(w.resistance for w in transformer.windings)
+    resistance = winding.resistance + downstream.resistance
 
     # IEEE 37/123 open-delta regulators are benchmarked as a two-unit equivalent
     # where the series leakage term is three times the per-unit nameplate leakage.
@@ -271,7 +335,7 @@ function transformer_scale(conn_a::Symbol, conn_b::Symbol, rows_a::Int, rows_b::
 end
 
 function winding_rated_va(winding::TransformerWinding)
-    phase_factor = length(winding.bus.phases) == 3 ? 3.0 : 1.0
+    phase_factor = modeled_phase_count(winding.bus.phases) == 3 ? 3.0 : 1.0
     return max(winding.kva * 1000 / phase_factor, 1.0)
 end
 
@@ -289,8 +353,79 @@ function transformer_regularization(C::AbstractMatrix{ComplexF64}, conn::Symbol,
     return abs(y) * epsilon .* mask
 end
 
+function transformer_pair_series_impedance(wi::TransformerWinding, wj::TransformerWinding, xpercent::Float64, reference::TransformerWinding, base::BaseQuantities; epsilon::Float64)
+    zpercent = complex(wi.resistance + wj.resistance, xpercent) / 100
+    rated = winding_rated_va(wi)
+    voltage_factor = (transformer_winding_voltage(reference) * max(reference.tap, epsilon) / base.Vbase)^2
+    z = zpercent * (base.Sbase / rated) * voltage_factor
+    abs(z) < epsilon && (z += im * epsilon)
+    return z
+end
+
+function transformer_pair_xpercent(transformer::TransformerDevice, i::Int, j::Int)
+    a, b = minmax(i, j)
+    a == 1 && b == 2 && return transformer.xhl_percent
+    a == 1 && b == 3 && return transformer.xht_percent
+    a == 2 && b == 3 && return transformer.xlt_percent
+    error("Unsupported transformer winding pair ($i, $j) in $(transformer.name)")
+end
+
+function transformer_winding_ratio(winding::TransformerWinding, reference::TransformerWinding; epsilon::Float64)
+    numerator = transformer_winding_voltage(winding) * max(winding.tap, epsilon)
+    denominator = transformer_winding_voltage(reference) * max(reference.tap, epsilon)
+    return ComplexF64(numerator / max(denominator, epsilon))
+end
+
+function stamp_winding_admittance_matrix!(rows, cols, vals, indexmap, windings::Vector{TransformerWinding}, yprimitive::Matrix{ComplexF64}, reference::TransformerWinding; epsilon::Float64)
+    matrices = [connection_matrix(w.conn, w.bus.phases) for w in windings]
+    ratios = [transformer_winding_ratio(w, reference; epsilon) for w in windings]
+    indices = [terminal_indices(indexmap, w.bus) for w in windings]
+
+    for i in eachindex(windings), j in eachindex(windings)
+        yij = yprimitive[i, j]
+        iszero(yij) && continue
+        block = (yij / (conj(ratios[i]) * ratios[j])) .* (matrices[i]' * matrices[j])
+        stamp_selected_block!(rows, cols, vals, indices[i], indices[j], block)
+    end
+end
+
+function three_winding_primitive_admittance(transformer::TransformerDevice, base::BaseQuantities; epsilon::Float64)
+    length(transformer.windings) == 3 || error("Only three-winding primitive admittance is supported")
+    w = transformer.windings
+    reference = w[2]
+    z12 = transformer_pair_series_impedance(w[1], w[2], transformer_pair_xpercent(transformer, 1, 2), reference, base; epsilon)
+    z13 = transformer_pair_series_impedance(w[1], w[3], transformer_pair_xpercent(transformer, 1, 3), reference, base; epsilon)
+    z23 = transformer_pair_series_impedance(w[2], w[3], transformer_pair_xpercent(transformer, 2, 3), reference, base; epsilon)
+
+    zleak = ComplexF64[
+        (z12 + z13 - z23) / 2,
+        (z12 + z23 - z13) / 2,
+        (z13 + z23 - z12) / 2,
+    ]
+    for idx in eachindex(zleak)
+        abs(zleak[idx]) < epsilon && (zleak[idx] += im * epsilon)
+    end
+
+    y = 1 ./ zleak
+    ysum = sum(y)
+    abs(ysum) < epsilon && (ysum += im * epsilon)
+    return Diagonal(y) - (y * transpose(y)) / ysum
+end
+
+function stamp_three_winding_transformer!(rows, cols, vals, indexmap, base; epsilon::Float64, transformer::TransformerDevice)
+    yprimitive = three_winding_primitive_admittance(transformer, base; epsilon)
+    stamp_winding_admittance_matrix!(rows, cols, vals, indexmap, transformer.windings, yprimitive, transformer.windings[2]; epsilon)
+end
+
 function stamp_transformer!(rows, cols, vals, indexmap, base; regulator_model::Symbol, epsilon::Float64, transformer::TransformerDevice)
     length(transformer.windings) >= 2 || return
+    if length(transformer.windings) == 3
+        stamp_three_winding_transformer!(rows, cols, vals, indexmap, base; epsilon, transformer)
+        return
+    elseif length(transformer.windings) > 3
+        error("Transformer $(transformer.name) has $(length(transformer.windings)) windings; only two- and three-winding transformers are supported")
+    end
+
     w1 = transformer.windings[1]
     w2 = transformer.windings[2]
     z = transformer.is_regulator ? regulator_series_impedance(transformer, base; epsilon) :

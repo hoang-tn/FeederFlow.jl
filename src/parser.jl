@@ -35,6 +35,11 @@ It respects both single (`'`) and double (`"`) quotes equally. This is critical 
 where property values may contain special characters.
 """
 function strip_comment(line::AbstractString)
+    stripped = strip(line)
+    if !isempty(stripped) && stripped[1] == '/' && all(ch -> ch == '/' || ch == '*' || ch == '-' || ch == '#' || isspace(ch), stripped)
+        return ""
+    end
+
     quote_char = '\0'
     chars = collect(line)
     for idx in eachindex(chars)
@@ -818,6 +823,7 @@ function parse_line(object::DSSObject, linecodes::Dict{String,LineCode})
     from = parse_bus_terminal(property_alias(props, "bus1"); nphases = nphases, preserve_order = true)
     to = parse_bus_terminal(property_alias(props, "bus2"); nphases = nphases, preserve_order = true)
     phases = !isempty(from.phases) ? from.phases : (!isempty(to.phases) ? to.phases : collect(1:nphases))
+    phases = isempty(modeled_phases(phases; preserve_order = true)) ? collect(1:min(nphases, 3)) : modeled_phases(phases; preserve_order = true)
     from = terminal(from.bus, phases; preserve_order = true)
     to = terminal(to.bus, phases; preserve_order = true)
     code_name = property_alias(props, "linecode")
@@ -919,9 +925,9 @@ function transformer_windings(object::DSSObject)
                 tap = 1.0
             end
         end
-        term = parse_bus_terminal(bus_value; nphases = phases)
+        term = parse_bus_terminal(bus_value; nphases = phases, preserve_order = true)
         if isempty(term.phases)
-            term = terminal(term.bus, collect(1:phases))
+            term = terminal(term.bus, collect(1:min(phases, 3)); preserve_order = true)
         end
         push!(result, TransformerWinding(
             idx,
@@ -960,7 +966,7 @@ end
 
 function parse_transformer(object::DSSObject, regcontrols::Dict{String,RegControl})
     windings = transformer_windings(object)
-    phases = sort!(unique(vcat((w.bus.phases for w in windings)...)))
+    phases = modeled_phases(vcat((w.bus.phases for w in windings)...))
     regcontrol = get(regcontrols, object.name, nothing)
     is_regulator = regcontrol !== nothing || startswith(object.name, "reg")
     props = object.properties
@@ -992,7 +998,8 @@ function parse_capacitor(object::DSSObject)
     props = object.properties
     nphases = parse_int(property_alias(props, "phases"), 3)
     bus = parse_bus_terminal(property_alias(props, "bus1"); nphases = nphases)
-    bus = isempty(bus.phases) ? terminal(bus.bus, collect(1:nphases)) : bus
+    active = modeled_phases(bus.phases)
+    bus = isempty(active) ? terminal(bus.bus, collect(1:min(nphases, 3))) : terminal(bus.bus, active)
     kvar_total = parse_float(property_alias(props, "kvar"))
     kvar = fill(kvar_total / max(length(bus.phases), 1), length(bus.phases))
     conn_value = property_alias(props, "conn")
@@ -1004,6 +1011,8 @@ function parse_load(object::DSSObject)
     props = object.properties
     nphases = parse_int(property_alias(props, "phases"), 3)
     bus = parse_bus_terminal(property_alias(props, "bus1"); nphases = nphases)
+    active = modeled_phases(bus.phases)
+    isempty(active) || (bus = terminal(bus.bus, active))
     conn_value = property_alias(props, "conn")
     conn = conn_value === nothing ? :wye : parse_conn(conn_value)
 
@@ -1011,7 +1020,7 @@ function parse_load(object::DSSObject)
         if conn == :delta && nphases == 1
             bus = terminal(bus.bus, [1, 2])
         else
-            bus = terminal(bus.bus, collect(1:nphases))
+            bus = terminal(bus.bus, collect(1:min(nphases, 3)))
         end
     end
 
@@ -1063,7 +1072,8 @@ function parse_pvsystem(object::DSSObject)
     props = object.properties
     nphases = parse_int(property_alias(props, "phases"), 3)
     bus = parse_bus_terminal(property_alias(props, "bus1"); nphases = nphases)
-    bus = isempty(bus.phases) ? terminal(bus.bus, collect(1:nphases)) : bus
+    active = modeled_phases(bus.phases)
+    bus = isempty(active) ? terminal(bus.bus, collect(1:min(nphases, 3))) : terminal(bus.bus, active)
     conn = :wye  # PV systems are typically wye-connected in OpenDSS
 
     # Extract power ratings
@@ -1181,6 +1191,10 @@ function build_source(state::DSSState)
     bus_value = property_alias(props, "bus1", "bus")
     basekv_raw = property_alias(props, "basekv")
     pu_raw = property_alias(props, "pu")
+    r1_raw = property_alias(props, "r1")
+    x1_raw = property_alias(props, "x1")
+    r0_raw = property_alias(props, "r0")
+    x0_raw = property_alias(props, "x0")
 
     # Some OpenDSS masters configure source settings via `Edit Vsource.Source ...`.
     vsource = get(state.objects, ("vsource", "source"), nothing)
@@ -1189,10 +1203,15 @@ function build_source(state::DSSState)
         bus_value === nothing && (bus_value = property_alias(vprops, "bus1", "bus"))
         basekv_raw === nothing && (basekv_raw = property_alias(vprops, "basekv"))
         pu_raw === nothing && (pu_raw = property_alias(vprops, "pu"))
+        r1_raw === nothing && (r1_raw = property_alias(vprops, "r1"))
+        x1_raw === nothing && (x1_raw = property_alias(vprops, "x1"))
+        r0_raw === nothing && (r0_raw = property_alias(vprops, "r0"))
+        x0_raw === nothing && (x0_raw = property_alias(vprops, "x0"))
     end
 
     bus = parse_bus_terminal(bus_value === nothing ? "sourcebus" : bus_value; nphases = 3)
-    phases = isempty(bus.phases) ? [1, 2, 3] : bus.phases
+    phases = isempty(bus.phases) ? [1, 2, 3] : modeled_phases(bus.phases)
+    isempty(phases) && (phases = [1, 2, 3])
     angle_raw = property_alias(props, "angle")
     if vsource !== nothing
         vprops = vsource.properties
@@ -1204,7 +1223,24 @@ function build_source(state::DSSState)
         conn_raw === nothing && (conn_raw = property_alias(vprops, "conn"))
     end
     conn = conn_raw === nothing ? :wye : Symbol(lowercase(conn_raw))
-    return SourceSpec(circuit.name, bus.bus, phases, parse_float(basekv_raw), parse_float(pu_raw, 1.0), parse_float(angle_raw, 0.0), copy(DEFAULT_SOURCE_COST_COEFF), conn)
+    r1 = parse_float(r1_raw, 0.0)
+    x1 = parse_float(x1_raw, 0.0)
+    r0 = parse_float(r0_raw, r1)
+    x0 = parse_float(x0_raw, x1)
+    return SourceSpec(
+        circuit.name,
+        bus.bus,
+        phases,
+        parse_float(basekv_raw),
+        parse_float(pu_raw, 1.0),
+        parse_float(angle_raw, 0.0),
+        copy(DEFAULT_SOURCE_COST_COEFF),
+        conn,
+        r1,
+        x1,
+        r0,
+        x0,
+    )
 end
 
 function infer_base_quantities(source::SourceSpec, transformers::Vector{TransformerDevice})
@@ -1408,15 +1444,35 @@ function convert_lines_to_pu(lines::Vector{LineDevice}, base::BaseQuantities)
 end
 
 """
-    parse_file(path; kwargs...)
+    parse_file(path; include_neutral=false, kwargs...)
 
 Parse an OpenDSS feeder entry file into a `NetworkModel`.
 
 The parser resolves `Redirect`/`Compile` chains, normalizes object names and
 properties, collects component provenance, and infers per-unit base quantities.
-Keyword arguments are forwarded to the underlying DSS parser.
+
+# Arguments
+- `path`: Path to the OpenDSS Master.dss file
+
+# Keyword Arguments
+- `include_neutral::Bool = false`: Controls neutral phase handling
+  - `false` (default): Filter phase 0 from bus phases. Neutral is treated as ground (V=0).
+    This is the standard 3-wire model for distribution feeders.
+  - `true`: Keep phase 0 for explicit 4-wire modeling with neutral conductor.
+
+The filtering happens in `add_bus_phases!` which is called for all buses.
+When disabled, loads connect to neutral via `(phase, 0)` pairs with implicit ground reference.
+
+# Example
+```julia
+# Default 3-wire model (neutral = ground)
+network = parse_file("Master.dss")
+
+# 4-wire model with explicit neutral node
+network = parse_file("Master.dss"; include_neutral=true)
+```
 """
-function parse_file(path::AbstractString; kwargs...)
+function parse_file(path::AbstractString; include_neutral::Bool = false, kwargs...)
     state = parse_dss(path)
     linecodes = Dict{String,LineCode}()
     regcontrols = Dict{String,RegControl}()
@@ -1455,31 +1511,51 @@ function parse_file(path::AbstractString; kwargs...)
         end
     end
     source = build_source(state)
+    # Filter phase 0 from source phases when include_neutral is false.
+    # Neutral (phase 0) is ground reference V=0 in 3-wire model; explicit 4-wire model includes it as a node.
+    if !include_neutral && 0 in source.phases
+        source_phases = filter(!isequal(0), source.phases)
+        source = SourceSpec(
+            source.name,
+            source.bus,
+            source_phases,
+            source.basekv,
+            source.pu,
+            source.angle_deg,
+            source.cost_coeff,
+            source.conn,
+            source.r1,
+            source.x1,
+            source.r0,
+            source.x0,
+        )
+    end
     regulators = [transformer for transformer in transformers if transformer.is_regulator]
     regulators = apply_known_regulator_taps(source, regulators)
     fixed_transformers = [transformer for transformer in transformers if !transformer.is_regulator]
     bus_phase_sets = Dict{String,Set{Int}}()
     for line in lines
-        add_bus_phases!(bus_phase_sets, line.from)
-        add_bus_phases!(bus_phase_sets, line.to)
+        add_bus_phases!(bus_phase_sets, line.from; include_neutral)
+        add_bus_phases!(bus_phase_sets, line.to; include_neutral)
     end
     for transformer in transformers, winding in transformer.windings
-        add_bus_phases!(bus_phase_sets, winding.bus)
+        add_bus_phases!(bus_phase_sets, winding.bus; include_neutral)
     end
     for capacitor in capacitors
-        add_bus_phases!(bus_phase_sets, capacitor.bus)
+        add_bus_phases!(bus_phase_sets, capacitor.bus; include_neutral)
     end
     for generator in generators
-        add_bus_phases!(bus_phase_sets, generator.bus)
+        add_bus_phases!(bus_phase_sets, generator.bus; include_neutral)
     end
     for load in loads
-        add_bus_phases!(bus_phase_sets, load.bus)
+        add_bus_phases!(bus_phase_sets, load.bus; include_neutral)
     end
-    add_bus_phases!(bus_phase_sets, TerminalSpec(source.bus, source.phases))
+    add_bus_phases!(bus_phase_sets, TerminalSpec(source.bus, source.phases); include_neutral)
     ordered = ordered_bus_names(source, lines, transformers, capacitors, generators, loads)
     bus_vbase_map = compute_bus_voltage_bases(source, fixed_transformers, lines, regulators, ordered)
+    phases_for_bus = include_neutral ? source.phases : filter(!isequal(0), source.phases)
     buses = [BusSpec(name,
-                    sort!(collect(get(bus_phase_sets, name, Set(source.phases)))),
+                    sort!(collect(get(bus_phase_sets, name, Set(phases_for_bus)))),
                     0.9,
                     1.1,
                     bus_vbase_map[name]) for name in ordered]

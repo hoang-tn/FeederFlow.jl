@@ -9,7 +9,23 @@ at 1.0 pu). Returns both the network voltages `w` and the combined phase
 voltage dictionary.
 """
 function compute_no_load(ybus::YBusModel; v_slack::Vector{ComplexF64} = balanced_slack())
-    w = -(ybus.Y \ (ybus.Y_NS * v_slack))
+    rhs = ybus.Y_NS * v_slack
+    try
+        w = -(ybus.Y \ rhs)
+        phase_voltages = Dict{BusPhase,ComplexF64}()
+        for (index, node) in enumerate(ybus.network_order)
+            phase_voltages[node] = w[index]
+        end
+        for (index, node) in enumerate(ybus.slack_order)
+            phase_voltages[node] = v_slack[index]
+        end
+        return NoLoadResult(v_slack, w, phase_voltages)
+    catch err
+        err isa LinearAlgebra.SingularException || rethrow(err)
+    end
+
+    regularization = 1e-9
+    w = -((ybus.Y + spdiagm(0 => fill(regularization, size(ybus.Y, 1)))) \ rhs)
     phase_voltages = Dict{BusPhase,ComplexF64}()
     for (index, node) in enumerate(ybus.network_order)
         phase_voltages[node] = w[index]
@@ -125,9 +141,16 @@ function solve_power_flow(bundle::AnalysisBundle, method::Symbol, max_iter::Int,
     history = Float64[]
     converged = false
     iterations = 0
+    regularization = 1e-9
     for iter in 1:max_iter
         injections = load_currents(loads, v)
-        v = system \ (-injections - ybus.Y_NS * slack)
+        rhs = -injections - ybus.Y_NS * slack
+        try
+            v = system \ rhs
+        catch err
+            err isa LinearAlgebra.SingularException || rethrow(err)
+            v = (system + spdiagm(0 => fill(regularization, size(system, 1)))) \ rhs
+        end
         residual = system * v + load_currents(loads, v) + ybus.Y_NS * slack
         err = norm(residual, 1)
         push!(history, err)
@@ -138,7 +161,11 @@ function solve_power_flow(bundle::AnalysisBundle, method::Symbol, max_iter::Int,
         end
     end
     combined = full_voltage_vector(ybus, v, slack)
-    phase_voltages = Dict(node => combined[idx] for (idx, node) in enumerate(ybus.all_order))
+    phase_voltages = Dict{BusPhase,ComplexF64}()
+    for (idx, node) in enumerate(ybus.all_order)
+        is_source_internal_slack_bus(node.bus) && continue
+        phase_voltages[node] = combined[idx]
+    end
     return PowerFlowResult(
         iterations,
         converged,

@@ -39,6 +39,12 @@ function get_network_registry()
             false,  # Will be auto-detected
             "IEEE 13-bus test feeder"
         ),
+        "ieee240" => NetworkConfig(
+            "ieee240",
+            joinpath(repo_root, "FeederFlow.jl", "examples", "grids", "240_bus", "Master.dss"),
+            true,
+            "IEEE 240-bus test feeder"
+        ),
         "ieee37" => NetworkConfig(
             "ieee37",
             joinpath(repo_root, "three-phase-modeling", "IEEE 37-bus feeder", "IEEE37openDSSdata", "ieee37opendss.dss"),
