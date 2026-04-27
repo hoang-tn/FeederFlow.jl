@@ -189,7 +189,7 @@ Fields:
 - `vmax_pu`: Maximum voltage magnitude (pu), default 1.1
 - `vbase`: Nominal line-to-neutral voltage base (V)
 """
-struct BusSpec
+mutable struct BusSpec
     name::String
     phases::Vector{Int}
     vmin_pu::Float64

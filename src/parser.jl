@@ -1571,7 +1571,7 @@ function parse_file(path::AbstractString; include_neutral::Bool = false, kwargs.
     loads_pu = convert_loads_to_pu(loads, base)
     lines_pu = convert_lines_to_pu(lines, base)
 
-    return NetworkModel(
+    network = NetworkModel(
         ComponentTable(buses),
         source.bus,
         source,
@@ -1585,4 +1585,7 @@ function parse_file(path::AbstractString; include_neutral::Bool = false, kwargs.
         base,
         provenance,
     )
+    # Adjust vbase for floating two-wire delta buses
+    adjust_floating_delta_vbase!(network)
+    return network
 end
