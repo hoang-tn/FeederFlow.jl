@@ -10,22 +10,22 @@ voltage dictionary.
 """
 function compute_no_load(ybus::YBusModel; v_slack::Vector{ComplexF64} = balanced_slack())
     rhs = ybus.Y_NS * v_slack
-    try
-        w = -(ybus.Y \ rhs)
-        phase_voltages = Dict{BusPhase,ComplexF64}()
-        for (index, node) in enumerate(ybus.network_order)
-            phase_voltages[node] = w[index]
-        end
-        for (index, node) in enumerate(ybus.slack_order)
-            phase_voltages[node] = v_slack[index]
-        end
-        return NoLoadResult(v_slack, w, phase_voltages)
+    n = size(ybus.Y, 1)
+    used_regularization = false
+    regularization = 0.0
+    w = try
+        -(ybus.Y \ rhs)
     catch err
         err isa LinearAlgebra.SingularException || rethrow(err)
+        nothing
     end
-
-    regularization = 1e-9
-    w = -((ybus.Y + spdiagm(0 => fill(regularization, size(ybus.Y, 1)))) \ rhs)
+    if w === nothing
+        # Stiff/large feeders can yield a singular Y; use a modest fixed shift (do not
+        # scale by norm(Y, Inf) — IEEE8500 admittances are badly scaled in pu).
+        used_regularization = true
+        regularization = 1e-6
+        w = -((ybus.Y + spdiagm(0 => fill(regularization, n))) \ rhs)
+    end
     phase_voltages = Dict{BusPhase,ComplexF64}()
     for (index, node) in enumerate(ybus.network_order)
         phase_voltages[node] = w[index]
@@ -53,14 +53,37 @@ function normalize_voltage_to_bus_base(v::ComplexF64, bp::BusPhase, base::BaseQu
 end
 
 """
-    normalize_result_to_local_bases(result, base) -> PowerFlowResult
+    normalize_result_to_local_bases(result, network, all_order) -> PowerFlowResult
 
-Compatibility helper for legacy callers.
+Express voltages in each bus's local per-unit base (`BusSpec.vbase` LN volts).
 
-Under single global-base operation, this returns `result` unchanged.
+Global Y-bus quantities use `network.base.Vbase`; local pu is
+`|V|_local = |V|_global * (Vbase_global / Vbase_bus)`.
 """
-function normalize_result_to_local_bases(result::PowerFlowResult, base::BaseQuantities, all_order::Vector{BusPhase})
-    return result
+function normalize_result_to_local_bases(result::PowerFlowResult,
+                                         network::NetworkModel,
+                                         all_order::Vector{BusPhase})
+    bus_vbase = Dict(bus.name => bus.vbase for bus in network.buses)
+    global_vbase = network.base.Vbase
+    scaled = Vector{ComplexF64}(undef, length(all_order))
+    phase_voltages = Dict{BusPhase,ComplexF64}()
+    for (idx, node) in enumerate(all_order)
+        local_base = get(bus_vbase, node.bus, global_vbase)
+        scale = global_vbase / local_base
+        scaled[idx] = result.voltages[idx] * scale
+        if haskey(result.phase_voltages, node)
+            phase_voltages[node] = result.phase_voltages[node] * scale
+        end
+    end
+    return PowerFlowResult(
+        result.iterations,
+        result.converged,
+        scaled,
+        phase_voltages,
+        abs.(scaled),
+        rad2deg.(angle.(scaled)),
+        result.history,
+    )
 end
 
 """
@@ -78,7 +101,8 @@ and compute regulator secondary voltages. Returns an `AnalysisBundle`.
 """
 function analyze_network_once(network::NetworkModel; method::Symbol = :zbus, regulator_model::Symbol = :nonideal, epsilon::Float64 = 1e-5, max_iter::Int = 10, tol::Float64 = 1e-5)
     ybus = build_y(network; regulator_model, epsilon)
-    noload = compute_no_load(ybus; v_slack = source_slack(network.source, network.base))
+    v_slack = source_slack(network.source, network.base)
+    noload = compute_no_load(ybus; v_slack)
     loads = build_load_model(network, ybus, noload)
     ybus = YBusModel(ybus.Ynet, ybus.Y, ybus.Y_NS, ybus.Y_SS, ybus.network_order, ybus.slack_order, ybus.all_order, ybus.network_index, ybus.all_index, ybus.available_phases, loads.YL)
     bundle = AnalysisBundle(network, ybus, noload, loads, PowerFlowResult(0, false, ComplexF64[], Dict{BusPhase,ComplexF64}(), Float64[], Float64[], Float64[]))
@@ -98,9 +122,8 @@ function analyze_network_once(network::NetworkModel; method::Symbol = :zbus, reg
         )
         bundle = AnalysisBundle(network, ybus, noload, loads, result)
     end
-    # Single-base policy: keep one canonical system-base result.
-    bundle = AnalysisBundle(network, ybus, noload, loads, result)
-    return bundle
+    normalized = normalize_result_to_local_bases(result, network, ybus.all_order)
+    return AnalysisBundle(network, ybus, noload, loads, result, normalized)
 end
 
 """
@@ -108,7 +131,7 @@ end
 
 Return the canonical power-flow result.
 
-Under single global-base operation, this is identical to `bundle.result`.
+Returns local-bus-base per-unit voltages when available; otherwise the global-base result.
 """
 function get_normalized_result(bundle::AnalysisBundle)
     bundle.normalized_result === nothing ? bundle.result : bundle.normalized_result
@@ -138,6 +161,7 @@ function solve_power_flow(bundle::AnalysisBundle, method::Symbol, max_iter::Int,
     slack = bundle.noload.slack
     system = ybus.Y + loads.YL
     v = copy(bundle.noload.w)
+    
     history = Float64[]
     converged = false
     iterations = 0
@@ -152,7 +176,7 @@ function solve_power_flow(bundle::AnalysisBundle, method::Symbol, max_iter::Int,
             v = (system + spdiagm(0 => fill(regularization, size(system, 1)))) \ rhs
         end
         residual = system * v + load_currents(loads, v) + ybus.Y_NS * slack
-        err = norm(residual, 1)
+        err = norm(residual, Inf)
         push!(history, err)
         iterations = iter
         if err <= tol

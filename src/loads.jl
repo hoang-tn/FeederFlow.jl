@@ -267,6 +267,18 @@ function accumulate_pair_current!(currents::Vector{ComplexF64}, pair::NTuple{2,I
     return currents
 end
 
+"""
+    load_injection_current(value, voltage, voltage_pu, vminpu, vmaxpu) -> ComplexF64
+
+Constant-power load current. Outside the OpenDSS voltage band, keep constant P/Q
+rather than a ZIP surrogate `conj(S/V_nom^2)*V`, which is unstable when |V| grows.
+"""
+function load_injection_current(value::ComplexF64, voltage::ComplexF64, ::Float64,
+                                ::Float64, ::Float64)
+    abs(voltage) > 0 || return 0.0 + 0im
+    return conj(value / voltage)
+end
+
 function load_currents(loads::LoadModel, v::Vector{ComplexF64})
     currents = zeros(ComplexF64, length(v))
     for contribution in loads.contributions
@@ -276,11 +288,8 @@ function load_currents(loads::LoadModel, v::Vector{ComplexF64})
                 nominal = contribution.nominal_magnitudes[idx]
                 if abs(voltage) > 0 && nominal > 0
                     voltage_pu = abs(voltage) / nominal
-                    if voltage_pu < contribution.vminpu[idx] || voltage_pu > contribution.vmaxpu[idx]
-                        conj(value / nominal^2) * voltage
-                    else
-                        conj(value / voltage)
-                    end
+                    load_injection_current(value, voltage, voltage_pu,
+                        contribution.vminpu[idx], contribution.vmaxpu[idx])
                 else
                     0.0 + 0im
                 end
@@ -301,10 +310,12 @@ function load_currents(loads::LoadModel, v::Vector{ComplexF64})
                 end
             elseif contribution.mode == :cvr || contribution.mode == :motor
                 voltage = pair_voltage(v, pair)
-                if abs(voltage) > 0
-                    voltage_pu = abs(voltage) / contribution.nominal_magnitudes[idx]
+                nominal = contribution.nominal_magnitudes[idx]
+                if abs(voltage) > 0 && nominal > 0
+                    voltage_pu = abs(voltage) / nominal
                     if voltage_pu < contribution.vminpu[idx] || voltage_pu > contribution.vmaxpu[idx]
-                        conj(value / contribution.nominal_magnitudes[idx]^2) * voltage
+                        load_injection_current(value, voltage, voltage_pu,
+                            contribution.vminpu[idx], contribution.vmaxpu[idx])
                     else
                         s = complex(
                             real(value) * voltage_pu^contribution.cvrwatts[idx],

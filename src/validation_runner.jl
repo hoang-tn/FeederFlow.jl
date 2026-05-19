@@ -62,7 +62,25 @@ function get_network_registry()
             joinpath(repo_root, "three-phase-modeling", "European 906-bus LV feeder", "IEEELVopenDSSdata", "Master.dss"),
             false,
             "European 906-bus LV test feeder"
-        )
+        ),
+        "ckt5" => NetworkConfig(
+            "ckt5",
+            joinpath(repo_root, "FeederFlow.jl", "examples", "grids", "ckt5", "Master_ckt5.dss"),
+            true,
+            "EPRI ckt5 test feeder (geometry-based OH lines)"
+        ),
+        "ckt7" => NetworkConfig(
+            "ckt7",
+            joinpath(repo_root, "FeederFlow.jl", "examples", "grids", "ckt7", "Master_ckt7.dss"),
+            false,
+            "EPRI ckt7 test feeder (linecode-based)"
+        ),
+        "ckt24" => NetworkConfig(
+            "ckt24",
+            joinpath(repo_root, "FeederFlow.jl", "examples", "grids", "ckt24", "master_ckt24.dss"),
+            true,
+            "EPRI ckt24 test feeder (geometry-based OH lines)"
+        ),
     )
     
     return networks

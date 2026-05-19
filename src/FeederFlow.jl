@@ -8,6 +8,7 @@ using StaticArrays
 
 include("types.jl")
 include("utils.jl")
+include("line_geometry.jl")
 include("parser.jl")
 include("ybus.jl")
 include("loads.jl")
@@ -26,6 +27,8 @@ export AnalysisBundle,
     GeneratorDevice,
     LineCode,
     LineDevice,
+    LineGeometry,
+    WireData,
     LoadDevice,
     LoadModel,
     NetworkModel,

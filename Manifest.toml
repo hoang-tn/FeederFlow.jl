@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "b97f9f147c9e124e7311cfb8a0a3f8fd1d444131"
+project_hash = "0863a12f4ac2fba4aa50a49d2d6d2be0b9516366"
 
 [[deps.ASL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -246,7 +246,7 @@ uuid = "b22a6f82-2f65-5046-a5b2-351ab43fb4e5"
 version = "8.0.1+1"
 
 [[deps.FeederFlow]]
-deps = ["CSV", "DataFrames", "FeederFlow", "Ipopt", "JSON3", "JuMP", "LinearAlgebra", "Logging", "OpenDSSDirect", "PowerModelsDistribution", "PrecompileTools", "Printf", "SparseArrays", "StaticArrays"]
+deps = ["CSV", "DataFrames", "FeederFlow", "Ipopt", "JSON3", "JuMP", "LinearAlgebra", "Logging", "OpenDSSDirect", "Plots", "PowerModelsDistribution", "PrecompileTools", "Printf", "Random", "SparseArrays", "SpecialFunctions", "StaticArrays"]
 path = "."
 uuid = "8f9c5a44-f7c9-42f9-8ef7-6f0d3dd65701"
 version = "0.1.0"

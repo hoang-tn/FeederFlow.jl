@@ -39,6 +39,22 @@ const DSS_RPN_BINARY_OPERATORS = Dict(
     "^" => ^,
 )
 
+const DSS_RPN_UNARY_OPERATORS = Dict(
+    "sqr" => x -> x * x,
+    "sqrt" => sqrt,
+    "inv" => inv,
+)
+
+function flatten_rpn_tokens(value::Any)
+    if value isa AbstractVector
+        if length(value) == 1 && first(value) isa AbstractVector
+            return collect(Any, first(value))
+        end
+        return collect(Any, value)
+    end
+    return Any[value]
+end
+
 function parse_dss_rpn_tokens(tokens::AbstractVector)
     stack = Float64[]
     saw_operator = false
@@ -53,6 +69,14 @@ function parse_dss_rpn_tokens(tokens::AbstractVector)
             rhs = pop!(stack)
             lhs = pop!(stack)
             push!(stack, DSS_RPN_BINARY_OPERATORS[text](lhs, rhs))
+            continue
+        end
+
+        if haskey(DSS_RPN_UNARY_OPERATORS, text)
+            saw_operator = true
+            length(stack) >= 1 || return nothing
+            arg = pop!(stack)
+            push!(stack, DSS_RPN_UNARY_OPERATORS[text](arg))
             continue
         end
 
@@ -74,16 +98,33 @@ function parse_dss_rpn_text(text::AbstractString)
     return parse_dss_rpn_tokens(tokens)
 end
 
+"""
+    convert_to_meters(units::AbstractString) -> Float64
+
+Return how many meters correspond to one OpenDSS length unit.
+"""
+function convert_to_meters(units::AbstractString)
+    u = lowercase(strip(units))
+    u == "none" && return 1.0
+    u == "m" && return 1.0
+    u == "km" && return 1000.0
+    u == "ft" && return 0.3048
+    u == "kft" && return 304.8
+    u == "mi" && return 1609.344
+    u == "in" && return 0.0254
+    u == "cm" && return 0.01
+    u == "mm" && return 0.001
+    @warn "Unknown DSS length unit '$units'; treating as meters" units = units
+    return 1.0
+end
+
 function parse_float(value::Any, default::Float64 = 0.0)
     value === nothing && return default
     value isa Number && return Float64(value)
 
     if value isa AbstractVector
-        if length(value) == 1 && first(value) isa AbstractVector
-            return parse_float(first(value), default)
-        end
-
-        rpn_value = parse_dss_rpn_tokens(value)
+        flat = flatten_rpn_tokens(value)
+        rpn_value = parse_dss_rpn_tokens(flat)
         rpn_value !== nothing && return rpn_value
 
         if length(value) == 1
@@ -152,8 +193,75 @@ function terminal(bus::AbstractString, phases::Vector{Int}; preserve_order::Bool
     TerminalSpec(normalize_name(bus), cleaned)
 end
 
+"""
+    should_preserve_bus_terminal_token(text) -> Bool
+
+Return whether a DSS token should stay a string instead of being parsed as `Float64`.
+
+OpenDSS bus terminals use dotted conductor lists (`bus.conductor` or `bus.1.2.3`).
+Numeric utility bus IDs such as `1160483.2` are misread as floats and reprinted in
+scientific notation (`1.1604832e6`), which breaks phase parsing.
+
+Preserve when:
+- the token is all digits with a leading zero (e.g. `05410` must not become `5410`), or
+- the token is a long all-digit GIS bus id (≥ 7 digits, e.g. `1160483`), or
+- two or more dot separators (e.g. `63683.1.3`, `sourcebus.1.2.3.0`), or
+- exactly one dot, all dot-separated segments are digits, and the bus id has ≥ 7 digits
+  (EPRI-style GIS node ids in feeders like ckt5/ckt24).
+
+Short numeric pairs like `1.5` are not preserved so ordinary property floats still parse.
+"""
+function should_preserve_numeric_bus_token(text::AbstractString)
+    stripped = strip(text)
+    isempty(stripped) && return false
+    all(isdigit, stripped) || return false
+    startswith(stripped, '0') && return true
+    return length(stripped) >= 7
+end
+
+function should_preserve_bus_terminal_token(text::AbstractString)
+    stripped = strip(text)
+    should_preserve_numeric_bus_token(stripped) && return true
+    occursin('.', stripped) || return false
+    cleaned = replace(stripped, ['[', ']', '(', ')'] => "")
+    parts = [strip(part) for part in split(cleaned, '.') if !isempty(strip(part))]
+    length(parts) < 2 && return false
+    length(parts) >= 3 && return true
+    all_numeric = all(all(isdigit, part) for part in parts)
+    return all_numeric && length(parts[1]) >= 7
+end
+
+"""
+    bus_terminal_text(value) -> String
+
+Recover the dotted bus-terminal text used by `parse_bus_terminal`.
+"""
+function bus_terminal_text(value::Any)
+    if value isa AbstractString
+        return strip(value)
+    elseif value isa Integer
+        return string(value)
+    elseif value isa AbstractFloat
+        # Tokens like bus=633 are parsed as 633.0; string(633.0) == "633.0" would
+        # incorrectly become bus 633, conductor 0 (neutral).
+        if isfinite(value) && value == round(value)
+            return string(round(Int, value))
+        end
+        text = strip(string(value))
+        if occursin('e', lowercase(text))
+            throw(ArgumentError(
+                "Bus terminal was parsed as a floating-point number ($text). " *
+                "Numeric OpenDSS bus names with dotted conductors (e.g. 1160483.2) " *
+                "must be preserved as strings during DSS token parsing.",
+            ))
+        end
+        return text
+    end
+    return strip(dss_string(value))
+end
+
 function parse_bus_terminal(value::Any; nphases::Union{Nothing,Int} = nothing, preserve_order::Bool = false)
-    raw = strip(dss_string(value))
+    raw = bus_terminal_text(value)
     parts = split(replace(raw, ['[', ']', '(', ')'] => ""), '.')
     bus = normalize_name(first(parts))
     suffix = parts[2:end]
@@ -309,4 +417,11 @@ function stamp_triplet!(rows::Vector{Int}, cols::Vector{Int}, vals::Vector{Compl
         push!(cols, j_global)
         push!(vals, value)
     end
+end
+
+const AGENT_DEBUG_LOG_PATH = joinpath(@__DIR__, "..", "debug-51f4bf.log")
+
+function agent_debug_log(location::String, message::String, data::Dict{String,<:Any};
+                         hypothesisId::String = "", runId::String = "")
+    return nothing
 end

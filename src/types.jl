@@ -231,6 +231,38 @@ struct LineCode
     emergamps::Float64
 end
 
+"""
+    WireData(name, rac, rdc, gmrac, capradius, normamps, emergamps)
+
+Overhead conductor catalog entry parsed from OpenDSS `WireData` objects.
+All electrical quantities are stored in SI per-meter units (Ω/m, m).
+"""
+struct WireData
+    name::String
+    rac::Float64
+    rdc::Float64
+    gmrac::Float64
+    capradius::Float64
+    normamps::Float64
+    emergamps::Float64
+end
+
+"""
+    LineGeometry(name, nconds, nphases, reduce, wires, xs, hs)
+
+Physical conductor layout parsed from OpenDSS `LineGeometry` objects.
+Positions `xs` and `hs` are in meters; `wires` holds WireData names per conductor.
+"""
+struct LineGeometry
+    name::String
+    nconds::Int
+    nphases::Int
+    reduce::Bool
+    wires::Vector{String}
+    xs::Vector{Float64}
+    hs::Vector{Float64}
+end
+
 # Convenience constructor with defaults for backward compatibility
 function LineCode(name::String, nphases::Int, rmatrix::Matrix{Float64}, xmatrix::Matrix{Float64}, cmatrix::Matrix{Float64})
     LineCode(name, nphases, rmatrix, xmatrix, cmatrix, "none", 60.0, 400.0, 600.0)

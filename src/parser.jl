@@ -227,6 +227,7 @@ function parse_atom(token::AbstractString)
     lowered = lowercase(text)
     lowered == "yes" && return true
     lowered == "no" && return false
+    should_preserve_bus_terminal_token(text) && return text
     try
         return parse(Float64, text)
     catch
@@ -561,7 +562,22 @@ function parse_object_header(tokens::Vector{String}, file::String, line::Int)
     return parts[1], parts[2]
 end
 
+const TRANSFORMER_LEVEL_PROPERTIES = Set([
+    "xhl", "xht", "xlt",
+    "pctimag", "pctnoloadloss", "pctloadloss",
+    "pctrs",
+    "sub", "subname", "ppm_antifloat", "ppm",
+    "flrise", "hsrise", "thermal", "n", "m",
+    "phases", "windings", "buses", "conns", "kvs", "kvas", "taps",
+    "like", "enabled",
+])
+
+function is_transformer_level_property(key::String)
+    return key in TRANSFORMER_LEVEL_PROPERTIES
+end
+
 function apply_tokens!(object::DSSObject, tokens::Vector{String})
+    is_transformer = object.type == "transformer"
     current_winding = nothing
     idx = 1
     while idx <= length(tokens)
@@ -594,6 +610,8 @@ function apply_tokens!(object::DSSObject, tokens::Vector{String})
         elseif key == "wdg"
             current_winding = parse_int(value)
             assign_property!(object, key, current_winding)
+        elseif is_transformer && is_transformer_level_property(key)
+            object.properties[key] = value
         else
             assign_property!(object, key, value; winding = current_winding)
         end
@@ -745,12 +763,28 @@ function float_vector(value::Any)
     return [parse_float(item) for item in data]
 end
 
+function matrix_row_tokens(row::Any)
+    if row isa AbstractVector
+        tokens = String[]
+        for item in row
+            append!(tokens, matrix_row_tokens(item))
+        end
+        return tokens
+    end
+    text = strip(string(row))
+    isempty(text) && return String[]
+    if occursin('\t', text)
+        return [strip(part) for part in split(text, '\t') if !isempty(strip(part))]
+    end
+    return [strip(part) for part in split(text, [' ', ',']) if !isempty(strip(part))]
+end
+
 function matrix_property(value::Any, nphases::Int)
     value === nothing && return zeros(Float64, nphases, nphases)
     rows = value isa AbstractVector && !isempty(value) && first(value) isa AbstractVector ? value : [vector_property(value)]
     numeric_rows = Vector{Vector{Float64}}()
     for row in rows
-        push!(numeric_rows, [parse_float(item) for item in row])
+        push!(numeric_rows, [parse_float(token) for token in matrix_row_tokens(row)])
     end
     return lower_triangle_to_matrix(numeric_rows, nphases)
 end
@@ -844,20 +878,38 @@ function parse_line(object::DSSObject, linecodes::Dict{String,LineCode})
         rmatrix = linecode.rmatrix
         xmatrix = linecode.xmatrix
         cmatrix = linecode.cmatrix
-    elseif property_alias(props, "r1") !== nothing && nphases == 3
-        z1 = complex(parse_float(property_alias(props, "r1")), parse_float(property_alias(props, "x1")))
-        z0 = complex(parse_float(property_alias(props, "r0")), parse_float(property_alias(props, "x0")))
-        y1 = complex(0.0, parse_float(property_alias(props, "c1")))
-        y0 = complex(0.0, parse_float(property_alias(props, "c0")))
-        zmat = sequence_to_phase_matrix(z1, z0)
-        ymat = sequence_to_phase_matrix(y1, y0)
-        rmatrix = real(zmat)
-        xmatrix = imag(zmat)
-        cmatrix = imag(ymat)
+    elseif property_alias(props, "r1") !== nothing
+        r1_val = parse_float(property_alias(props, "r1"))
+        x1_val = parse_float(property_alias(props, "x1"))
+        r0_val = parse_float(property_alias(props, "r0"), r1_val)
+        x0_val = parse_float(property_alias(props, "x0"), x1_val)
+        c1_val = parse_float(property_alias(props, "c1"))
+        c0_val = parse_float(property_alias(props, "c0"), c1_val)
+        np = length(phases)
+        if np == 3
+            z1 = complex(r1_val, x1_val)
+            z0 = complex(r0_val, x0_val)
+            y1 = complex(0.0, c1_val)
+            y0 = complex(0.0, c0_val)
+            zmat = sequence_to_phase_matrix(z1, z0)
+            ymat = sequence_to_phase_matrix(y1, y0)
+            rmatrix = real(zmat)
+            xmatrix = imag(zmat)
+            cmatrix = imag(ymat)
+        elseif np == 1
+            rmatrix = fill(r1_val, 1, 1)
+            xmatrix = fill(x1_val, 1, 1)
+            cmatrix = fill(c1_val, 1, 1)
+        else
+            rmatrix = diagm(fill(r1_val, np))
+            xmatrix = diagm(fill(x1_val, np))
+            cmatrix = diagm(fill(c1_val, np))
+        end
     else
-        rmatrix = fill(parse_float(property_alias(props, "r1")), length(phases), length(phases))
-        xmatrix = fill(parse_float(property_alias(props, "x1")), length(phases), length(phases))
-        cmatrix = zeros(Float64, length(phases), length(phases))
+        np = length(phases)
+        rmatrix = zeros(Float64, np, np)
+        xmatrix = zeros(Float64, np, np)
+        cmatrix = zeros(Float64, np, np)
     end
     length_value = parse_float(property_alias(props, "length"), is_switch ? 0.001 : 1.0)
     if code_name !== nothing
@@ -897,6 +949,15 @@ function transformer_windings(object::DSSObject)
     default_loadloss = count >= 2 ? 0.4 : 0.0
     total_loadloss = parse_float(property_alias(props, "pctloadloss", "%loadloss"), default_loadloss)
     default_winding_resistance = count > 0 ? total_loadloss / count : 0.0
+
+    # OpenDSS %Rs=[...] sets per-winding resistances as an array at the transformer level.
+    rs_raw = property_alias(props, "pctrs")
+    per_winding_rs = if rs_raw !== nothing
+        float_vector(rs_raw)
+    else
+        Float64[]
+    end
+
     result = TransformerWinding[]
     for idx in 1:count
         local_props = get(windings, idx, Dict{String,Any}())
@@ -904,7 +965,13 @@ function transformer_windings(object::DSSObject)
         conn_value = property_alias(local_props, "conn")
         kv_value = property_alias(local_props, "kv")
         kva_value = property_alias(local_props, "kva")
-        resistance = parse_float(property_alias(local_props, "pctr"), default_winding_resistance)
+        resistance = if property_alias(local_props, "pctr") !== nothing
+            parse_float(property_alias(local_props, "pctr"), default_winding_resistance)
+        elseif idx <= length(per_winding_rs)
+            per_winding_rs[idx]
+        else
+            default_winding_resistance
+        end
         tap = parse_float(property_alias(local_props, "tap"), 0.0)
         if bus_value === nothing && idx <= length(buses)
             bus_value = buses[idx]
@@ -1007,6 +1074,45 @@ function parse_capacitor(object::DSSObject)
     return CapacitorDevice(object.name, bus, copy(bus.phases), kvar, parse_float(property_alias(props, "kv")), conn, object.provenance)
 end
 
+"""
+    load_active_reactive_kw(props) -> (kw, kvar)
+
+Resolve load `kW`/`kvar` from explicit DSS properties or from `xfkVA` nameplate data.
+
+OpenDSS allocated feeders (e.g. EPRI ckt24) often specify only `xfkVA` and `pf`.
+When `kW` is absent or zero, use `kW = xfkVA * |pf| * allocationfactor` with
+`allocationfactor` defaulting to 1.0. Tiny placeholder `kW` values (e.g. 0.0001 on
+ckt7) are replaced when they are negligible relative to the `xfkVA`-derived power.
+"""
+function load_active_reactive_kw(props::Dict{String,Any})
+    kw_value = property_alias(props, "kw")
+    kw = kw_value === nothing ? 0.0 : parse_float(kw_value, 0.0)
+
+    xfkva_value = property_alias(props, "xfkva", "xfkVA")
+    xfkva = xfkva_value === nothing ? 0.0 : parse_float(xfkva_value, 0.0)
+
+    pf_value = property_alias(props, "pf", "powerfactor")
+    pf = pf_value === nothing ? 1.0 : parse_float(pf_value, 1.0)
+    pf_mag = clamp(abs(pf), 0.0, 1.0)
+
+    if xfkva > 0.0
+        alloc_value = property_alias(props, "allocationfactor")
+        alloc = alloc_value === nothing ? 1.0 : parse_float(alloc_value, 1.0)
+        allocated_kw = xfkva * pf_mag * alloc
+        if kw_value === nothing || kw <= 0.0 || kw < 0.01 * allocated_kw
+            kw = allocated_kw
+        end
+    end
+
+    kvar_value = property_alias(props, "kvar")
+    kvar = if kvar_value === nothing
+        pf_mag == 0.0 ? 0.0 : (pf < 0 ? -1 : 1) * kw * tan(acos(pf_mag))
+    else
+        parse_float(kvar_value)
+    end
+    return kw, kvar
+end
+
 function parse_load(object::DSSObject)
     props = object.properties
     nphases = parse_int(property_alias(props, "phases"), 3)
@@ -1024,21 +1130,7 @@ function parse_load(object::DSSObject)
         end
     end
 
-    kw = parse_float(property_alias(props, "kw"))
-    kvar_value = property_alias(props, "kvar")
-    kvar = if kvar_value === nothing
-        pf_value = property_alias(props, "pf", "powerfactor")
-        if pf_value === nothing
-            0.0
-        else
-            pf = parse_float(pf_value, 1.0)
-            pf_mag = clamp(abs(pf), 0.0, 1.0)
-            reactive = kw * tan(acos(pf_mag))
-            pf < 0 ? -reactive : reactive
-        end
-    else
-        parse_float(kvar_value)
-    end
+    kw, kvar = load_active_reactive_kw(props)
 
     return LoadDevice(
         object.name,
@@ -1587,5 +1679,89 @@ function parse_file(path::AbstractString; include_neutral::Bool = false, kwargs.
     )
     # Adjust vbase for floating two-wire delta buses
     adjust_floating_delta_vbase!(network)
+    return network
+end
+
+const DELTA_PHASE_SCALE = sqrt(3) / 2
+
+"""
+    find_floating_two_wire_delta_buses(source, lines, transformers, regulators, bus_names)
+
+Identify buses that are:
+- Two-wire (2 phases)
+- Connected only to delta-winding transformer/regulator secondaries
+- Have no line connections (floating line-line)
+
+These buses are line-line constrained but phase-to-ground floating, so the
+minimum-norm no-load gauge gives |V_phase| = V_LL / 2. We mark them
+so their vbase is adjusted by DELTA_PHASE_SCALE (√3/2) during bus creation.
+"""
+function find_floating_two_wire_delta_buses(source::SourceSpec,
+                                           lines,
+                                           transformers,
+                                           regulators,
+                                           bus_names::Vector{String})
+    line_incidence = Dict{String,Int}()
+    for line in lines
+        line_incidence[line.from.bus] = get(line_incidence, line.from.bus, 0) + 1
+        line_incidence[line.to.bus] = get(line_incidence, line.to.bus, 0) + 1
+    end
+
+    winding_map = Dict{String,Vector{Any}}()
+    for tr in vcat(collect(transformers), collect(regulators))
+        for w in tr.windings
+            push!(get!(winding_map, w.bus.bus, Any[]), w)
+        end
+    end
+
+    floating = Set{String}()
+    for bus_name in bus_names
+        bus_phases = nothing
+        for line in lines
+            if line.from.bus == bus_name || line.to.bus == bus_name
+                bus_phases = nothing
+                break
+            end
+        end
+        # Check if bus has exactly 2 phases
+        # We need to check phases from bus_vbase_map or another source
+        # For now, skip this check here and do it during bus creation
+        windings = get(winding_map, bus_name, Any[])
+        isempty(windings) && continue
+        
+        # Check if all windings are delta with 2 phases
+        is_two_wire_delta = all(w.conn == :delta && 
+                               count(p -> 1 <= p <= 3, w.bus.phases) == 2 
+                               for w in windings)
+        is_two_wire_delta || continue
+        
+        # Check no line connections
+        get(line_incidence, bus_name, 0) == 0 || continue
+        
+        push!(floating, bus_name)
+    end
+    return floating
+end
+
+"""
+    adjust_floating_delta_vbase!(network)
+
+Adjust vbase for floating two-wire delta buses by factor DELTA_PHASE_SCALE.
+This corrects the gauge normalization so these buses operate near 1 pu
+for nominal line-line conditions.
+"""
+function adjust_floating_delta_vbase!(network::NetworkModel)
+    floating = find_floating_two_wire_delta_buses(
+        network.source,
+        network.lines,
+        network.transformers,
+        network.regulators,
+        String[bus.name for bus in network.buses]
+    )
+    isempty(floating) && return network
+    for bus_name in floating
+        bus = network.buses[bus_name]
+        bus.vbase = DELTA_PHASE_SCALE * bus.vbase
+    end
     return network
 end

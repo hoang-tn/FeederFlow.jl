@@ -202,12 +202,21 @@ function unit_to_kft(units::String)
     return 1.0
 end
 
+function _invert_series_impedance(z::Matrix{ComplexF64})
+    n = size(z, 1)
+    if norm(z) < 1e-12
+        # BUSBAR/fuse/ELB geometry entries can be all-zero; use a stiff tie impedance.
+        z = z + Matrix{ComplexF64}(Diagonal(fill(ComplexF64(1e-6, 0.0), n)))
+    end
+    return inv(z)
+end
+
 function line_admittance(line::LineDevice; include_shunt::Bool = true, ybase::Float64 = 1.0)
     # Total impedance = per-unit-length * effective length.
     # line.length has already been normalized to match the linecode's units
     # (see unit conversion logic in parse_line). No further conversion needed here.
     z = complex.(line.rmatrix, line.xmatrix) * line.length
-    yseries = inv(z) / ybase
+    yseries = _invert_series_impedance(z) / ybase
     yshunt = include_shunt ? (im * 2pi * line.basefreq * (line.cmatrix * 1e-9) * line.length) / ybase : zeros(ComplexF64, size(z))
     return yseries, yshunt
 end
@@ -626,62 +635,4 @@ function stamp_open_delta_regulator_group!(rows, cols, vals, indexmap, base::Bas
     stamp_selected_block!(rows, cols, vals, idx_n, idx_m, Yeq[1:3, 4:6])
     stamp_selected_block!(rows, cols, vals, idx_m, idx_n, Yeq[4:6, 1:3])
     stamp_selected_block!(rows, cols, vals, idx_m, idx_m, Yeq[4:6, 4:6])
-end
-
-"""
-    find_floating_two_wire_delta_buses(network)
-
-Identify buses that are:
-- Two-wire (2 phases)
-- Connected only to delta-winding transformer/regulator secondaries
-- Have no line connections (floating line-line)
-
-These buses are line-line constrained but phase-to-ground floating, so the
-minimum-norm no-load gauge gives |V_phase| = V_LL / 2. We adjust their
-vbase by (√3/2) so nominal line-line conditions map near 1 pu.
-"""
-function find_floating_two_wire_delta_buses(network::NetworkModel)
-    line_incidence = Dict{String,Int}()
-    for line in network.lines
-        line_incidence[line.from.bus] = get(line_incidence, line.from.bus, 0) + 1
-        line_incidence[line.to.bus] = get(line_incidence, line.to.bus, 0) + 1
-    end
-
-    winding_map = Dict{String,Vector{Any}}()
-    for tr in vcat(collect(network.transformers), collect(network.regulators))
-        for w in tr.windings
-            push!(get!(winding_map, w.bus.bus, Any[]), w)
-        end
-    end
-
-    floating = Set{String}()
-    for bus in network.buses
-        length(bus.phases) == 2 || continue
-        get(line_incidence, bus.name, 0) == 0 || continue
-        windings = get(winding_map, bus.name, Any[])
-        isempty(windings) && continue
-
-        is_two_wire_delta = all(w.conn == :delta && count(p -> 1 <= p <= 3, w.bus.phases) == 2 for w in windings)
-        is_two_wire_delta || continue
-        push!(floating, bus.name)
-    end
-    return floating
-end
-
-"""
-    adjust_floating_delta_vbase!(network)
-
-Adjust vbase for floating two-wire delta buses by factor √3/2.
-This corrects the gauge normalization so these buses operate near 1 pu
-for nominal line-line conditions.
-"""
-function adjust_floating_delta_vbase!(network::NetworkModel)
-    floating = find_floating_two_wire_delta_buses(network)
-    isempty(floating) && return network
-    delta_phase_scale = sqrt(3) / 2
-    for bus_name in floating
-        bus = network.buses[bus_name]
-        bus.vbase = delta_phase_scale * bus.vbase
-    end
-    return network
 end
