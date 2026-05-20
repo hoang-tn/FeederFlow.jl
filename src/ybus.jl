@@ -359,9 +359,9 @@ function transformer_regularization(C::AbstractMatrix{ComplexF64}, conn::Symbol,
 
     # Keep a tiny diagonal only for fully active closed-delta blocks to
     # improve global Y-bus conditioning without materially affecting parity.
-    if count(value -> value > 0, active) == 3
-        return abs(y) * (epsilon^2) .* mask
-    end
+    # if count(value -> value > 0, active) == 3
+    #     return abs(y) * (epsilon^2) .* mask
+    # end
 
     return abs(y) * epsilon .* mask
 end
