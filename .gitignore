@@ -1,8 +1,8 @@
 docs/
 scripts/
-test/
 *.log
 *.tmp
 .DS_Store
 notebooks/
+.cursor/
 

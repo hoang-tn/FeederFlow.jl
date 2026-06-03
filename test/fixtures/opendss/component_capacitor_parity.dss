@@ -1,0 +1,10 @@
+Clear
+New Circuit.capacitor_parity BasekV=4.16 pu=1.0 phases=3 bus1=src.1.2.3
+
+New LineCode.tie nphases=3 units=kft r1=0.15 x1=0.30 r0=0.45 x0=0.90 c1=0 c0=0
+New Line.tie1 phases=3 bus1=src.1.2.3 bus2=capbus.1.2.3 linecode=tie length=0.10
+
+New Capacitor.cap1 phases=3 bus1=capbus.1.2.3 kv=4.16 kvar=900
+New Load.anchor phases=3 bus1=capbus.1.2.3 conn=wye kv=4.16 kW=5 kvar=2 model=1
+
+Solve

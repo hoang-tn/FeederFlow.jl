@@ -1,0 +1,17 @@
+Clear
+
+New Circuit.geomtest bus1=sourcebus basekv=12.47 pu=1.0
+
+New WireData.AL_4/0_7STR Rac=0.301986 Runits=km GMRac=0.48006 GMRUnits=cm Radius=0.66294 Radunits=cm normamps=338 emergamps=406
+New WireData.ACSR_1/0_6/1 Rac=0.695936 Runits=km GMRac=0.13462 GMRUnits=cm Radius=0.50546 Radunits=cm normamps=271 emergamps=325
+
+New LineGeometry.3PH_HORIZ_LG_1C-AL_4/0_7STRAL_4/0_7STRAL_4/0_7STRACSR_1/0_6/1 nconds=4 nphases=3
+~ cond=1 wire=AL_4/0_7STR x=-1.39598 h=12.192 units=m
+~ cond=2 wire=AL_4/0_7STR x=0 h=12.192 units=m
+~ cond=3 wire=AL_4/0_7STR x=1.39598 h=12.192 units=m
+~ cond=4 wire=ACSR_1/0_6/1 x=0 h=10.9728 units=m
+~ reduce=y
+
+New Line.geom_line bus1=bus_a bus2=bus_b length=1.0 geometry=3PH_HORIZ_LG_1C-AL_4/0_7STRAL_4/0_7STRAL_4/0_7STRACSR_1/0_6/1 units=km phases=3
+
+New Load.load_a bus1=bus_a phases=3 conn=wye kv=7.2 kw=100
