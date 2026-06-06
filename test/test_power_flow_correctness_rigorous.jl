@@ -156,6 +156,24 @@ function raw_to_system_pu(raw_voltages::Dict{String,ComplexF64}, network::Feeder
     Dict(key => value / network.base.Vbase for (key, value) in raw_voltages)
 end
 
+function assert_local_base_normalization(bundle::FeederFlow.AnalysisBundle)
+    normalized = FeederFlow.get_normalized_result(bundle)
+    network = bundle.network
+    bus_vbase = Dict(bus.name => bus.vbase for bus in network.buses)
+    global_vbase = network.base.Vbase
+
+    @test bundle.normalized_result !== nothing
+    @test keys(normalized.phase_voltages) == keys(bundle.result.phase_voltages)
+
+    for (bp, v_global) in bundle.result.phase_voltages
+        local_base = get(bus_vbase, bp.bus, global_vbase)
+        scale = global_vbase / local_base
+        expected_local = v_global * scale
+        atol = 1e-9 * max(1.0, abs(expected_local), abs(v_global))
+        @test isapprox(normalized.phase_voltages[bp], expected_local; rtol = 0, atol = atol)
+    end
+end
+
 @testset "Power flow correctness rigorous - IEEE123 (general)" begin
     network = FeederFlow.parse_file(IEEE123_DSS)
     bundle = FeederFlow.solve_power_flow(network; max_iter = 10, tol = 1e-5)
@@ -164,8 +182,7 @@ end
 
     dss_raw = parse_opendss_voltages_live_raw(IEEE123_DSS, network)
 
-    normalized = FeederFlow.get_normalized_result(bundle)
-    @test normalized.phase_voltages == bundle.result.phase_voltages
+    assert_local_base_normalization(bundle)
 
     actual_system = actual_voltage_map(bundle.result.phase_voltages)
     dss_system = raw_to_system_pu(dss_raw, network)
@@ -203,8 +220,7 @@ end
 
     dss_raw = parse_opendss_voltages_live_raw(IEEE240_DSS, network)
 
-    normalized = FeederFlow.get_normalized_result(bundle)
-    @test normalized.phase_voltages == bundle.result.phase_voltages
+    assert_local_base_normalization(bundle)
 
     actual_system = actual_voltage_map(bundle.result.phase_voltages)
     dss_system = raw_to_system_pu(dss_raw, network)
@@ -246,8 +262,7 @@ end
 
     dss_raw = parse_opendss_voltages_live_raw(IEEE13_DSS, network)
 
-    normalized = FeederFlow.get_normalized_result(bundle)
-    @test normalized.phase_voltages == bundle.result.phase_voltages
+    assert_local_base_normalization(bundle)
 
     actual_system = actual_voltage_map(bundle.result.phase_voltages)
     dss_system = raw_to_system_pu(dss_raw, network)

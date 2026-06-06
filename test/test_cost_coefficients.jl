@@ -52,7 +52,7 @@
 
     benchmark_cases = (
         ("IEEE13", IEEE13_DSS, true),
-        ("IEEE123", IEEE123_DSS, false),
+        ("IEEE123", IEEE123_DSS, true),
         ("IEEE240", IEEE240_DSS, true),
         ("IEEE906", IEEE906_DSS, true),
     )
