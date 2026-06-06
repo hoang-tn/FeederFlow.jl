@@ -59,7 +59,7 @@
     )
 
     for (_, dss_path, expect_generators) in benchmark_cases
-        network = FeederFlow.parse_file(dss_path)
+        network = FeederFlow.parse_file(dss_path; randomize_pv_cost=false)
         @test network.source.cost_coeff == [1.0, 100.0, 0.0]
         if expect_generators
             @test !isempty(network.generators)
@@ -67,5 +67,44 @@
         else
             @test isempty(network.generators)
         end
+    end
+end
+
+@testset "PV cost coefficient randomization" begin
+    spread = 0.5
+    base = FeederFlow.DEFAULT_PV_COST_COEFF
+    c0_bounds = (base[1] * (1 - spread), base[1] * (1 + spread))
+    c1_bounds = (base[2] * (1 - spread), base[2] * (1 + spread))
+
+    mktempdir() do dir
+        f = joinpath(dir, "test.dss")
+        write(f, join([
+            "New object=circuit.test basekv=4.16 bus1=sourcebus pu=1.0",
+            "New pvsystem.pv1 phases=1 bus1=a.1 kv=4.16 pmpp=100 kva=110",
+            "New pvsystem.pv2 phases=1 bus1=b.1 kv=4.16 pmpp=50 kva=60",
+        ], "\n"))
+
+        network = FeederFlow.parse_file(f; pv_cost_seed=42, pv_cost_spread=spread)
+        pv1 = network.generators["pv1"]
+        pv2 = network.generators["pv2"]
+
+        @test c0_bounds[1] ≤ pv1.cost_coeff[1] ≤ c0_bounds[2]
+        @test c1_bounds[1] ≤ pv1.cost_coeff[2] ≤ c1_bounds[2]
+        @test pv1.cost_coeff[3] == 0.0
+        @test pv1.cost_coeff != pv2.cost_coeff
+
+        network_repeat = FeederFlow.parse_file(f; pv_cost_seed=42, pv_cost_spread=spread)
+        @test network_repeat.generators["pv1"].cost_coeff == pv1.cost_coeff
+        @test network_repeat.generators["pv2"].cost_coeff == pv2.cost_coeff
+    end
+
+    mktempdir() do dir
+        f = joinpath(dir, "test.dss")
+        write(f, join([
+            "New object=circuit.test basekv=4.16 bus1=sourcebus pu=1.0",
+            "New pvsystem.pv1 phases=1 bus1=a.1 kv=4.16 pmpp=100 kva=110",
+        ], "\n"))
+        network = FeederFlow.parse_file(f; randomize_pv_cost=false)
+        @test network.generators["pv1"].cost_coeff == base
     end
 end

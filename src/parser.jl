@@ -1,3 +1,5 @@
+using Random
+
 mutable struct DSSObject
     type::String
     name::String
@@ -1160,7 +1162,17 @@ end
 
 object_enabled(object::DSSObject) = parse_enabled(property_alias(object.properties, "enabled"), true)
 
-function parse_pvsystem(object::DSSObject)
+function _randomized_pv_cost_coeff(rng::AbstractRNG, spread::Real)
+    scales = 1.0 .+ (rand(rng, length(DEFAULT_PV_COST_COEFF)) .* 2 .- 1) .* Float64(spread)
+    return DEFAULT_PV_COST_COEFF .* scales
+end
+
+function parse_pvsystem(
+    object::DSSObject;
+    randomize_cost::Bool = true,
+    rng::Union{AbstractRNG, Nothing} = nothing,
+    cost_spread::Real = 0.5,
+)
     props = object.properties
     nphases = parse_int(property_alias(props, "phases"), 3)
     bus = parse_bus_terminal(property_alias(props, "bus1"); nphases = nphases)
@@ -1196,6 +1208,13 @@ function parse_pvsystem(object::DSSObject)
         end
     end
 
+    cost_coeff = if randomize_cost
+        rng === nothing && throw(ArgumentError("rng is required when randomize_cost=true"))
+        _randomized_pv_cost_coeff(rng, cost_spread)
+    else
+        copy(DEFAULT_PV_COST_COEFF)
+    end
+
     return GeneratorDevice(
         object.name,
         bus,
@@ -1209,7 +1228,7 @@ function parse_pvsystem(object::DSSObject)
         qmin,    # physical value (kvar) — converted to pu after base is known
         parse_float(property_alias(props, "vminpu"), 0.9),
         parse_float(property_alias(props, "vmaxpu"), 1.1),
-        copy(DEFAULT_PV_COST_COEFF),
+        cost_coeff,
         :pv,
         object.provenance,
     )
@@ -1536,7 +1555,7 @@ function convert_lines_to_pu(lines::Vector{LineDevice}, base::BaseQuantities)
 end
 
 """
-    parse_file(path; include_neutral=false, kwargs...)
+    parse_file(path; include_neutral=false, randomize_pv_cost=true, pv_cost_seed=12345, pv_cost_spread=0.5, kwargs...)
 
 Parse an OpenDSS feeder entry file into a `NetworkModel`.
 
@@ -1551,6 +1570,11 @@ properties, collects component provenance, and infers per-unit base quantities.
   - `false` (default): Filter phase 0 from bus phases. Neutral is treated as ground (V=0).
     This is the standard 3-wire model for distribution feeders.
   - `true`: Keep phase 0 for explicit 4-wire modeling with neutral conductor.
+- `randomize_pv_cost::Bool = true`: When true, assign each PV a distinct cost curve by
+  uniform multiplicative jitter around `DEFAULT_PV_COST_COEFF`.
+- `pv_cost_seed::Integer = 12345`: RNG seed for reproducible PV cost randomization.
+- `pv_cost_spread::Real = 0.5`: Half-width of uniform jitter; each coefficient is scaled by
+  `U(1 - spread, 1 + spread)`.
 
 The filtering happens in `add_bus_phases!` which is called for all buses.
 When disabled, loads connect to neutral via `(phase, 0)` pairs with implicit ground reference.
@@ -1562,9 +1586,19 @@ network = parse_file("Master.dss")
 
 # 4-wire model with explicit neutral node
 network = parse_file("Master.dss"; include_neutral=true)
+
+# Fixed default PV cost coefficients
+network = parse_file("Master.dss"; randomize_pv_cost=false)
 ```
 """
-function parse_file(path::AbstractString; include_neutral::Bool = false, kwargs...)
+function parse_file(
+    path::AbstractString;
+    include_neutral::Bool = false,
+    randomize_pv_cost::Bool = true,
+    pv_cost_seed::Integer = 1,
+    pv_cost_spread::Real = 0.5,
+    kwargs...,
+)
     state = parse_dss(path)
     linecodes = Dict{String,LineCode}()
     regcontrols = Dict{String,RegControl}()
@@ -1582,6 +1616,7 @@ function parse_file(path::AbstractString; include_neutral::Bool = false, kwargs.
     capacitors = CapacitorDevice[]
     generators = GeneratorDevice[]
     loads = LoadDevice[]
+    pv_cost_rng = randomize_pv_cost ? MersenneTwister(pv_cost_seed) : nothing
     for ((objtype, _), object) in state.objects
         # Skip disabled objects, except switches which are needed for OPF perturbation
         if !object_enabled(object)
@@ -1599,7 +1634,12 @@ function parse_file(path::AbstractString; include_neutral::Bool = false, kwargs.
         elseif objtype == "load"
             push!(loads, parse_load(object))
         elseif objtype == "pvsystem"
-            push!(generators, parse_pvsystem(object))
+            push!(generators, parse_pvsystem(
+                object;
+                randomize_cost = randomize_pv_cost,
+                rng = pv_cost_rng,
+                cost_spread = pv_cost_spread,
+            ))
         end
     end
     source = build_source(state)

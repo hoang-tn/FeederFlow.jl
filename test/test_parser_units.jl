@@ -572,7 +572,7 @@ end
             "New object=circuit.test basekv=4.16 bus1=sourcebus pu=1.0",
             "New pvsystem.pv1 phases=1 bus1=a.1 kv=4.16 pmpp=100 pf=0.95 kva=110",
         ], "\n"))
-        network = parse_file(f)
+        network = parse_file(f; randomize_pv_cost=false)
         pv = network.generators["pv1"]
         sbase_kva = network.base.Sbase / 1000.0
         @test pv.generator_type == :pv
