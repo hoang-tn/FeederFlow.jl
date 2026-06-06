@@ -1,8 +1,10 @@
-docs/
+Manifest.toml
+docs/build/
 scripts/
 *.log
 *.tmp
+debug-*.log
+validation/output/
 .DS_Store
 notebooks/
 .cursor/
-

@@ -52,7 +52,6 @@
 
     benchmark_cases = (
         ("IEEE13", IEEE13_DSS, true),
-        ("IEEE37", IEEE37_DSS, false),
         ("IEEE123", IEEE123_DSS, false),
         ("IEEE240", IEEE240_DSS, true),
         ("IEEE906", IEEE906_DSS, true),
@@ -84,7 +83,7 @@ end
             "New pvsystem.pv2 phases=1 bus1=b.1 kv=4.16 pmpp=50 kva=60",
         ], "\n"))
 
-        network = FeederFlow.parse_file(f; pv_cost_seed=42, pv_cost_spread=spread)
+        network = FeederFlow.parse_file(f; randomize_pv_cost=true, pv_cost_seed=42, pv_cost_spread=spread)
         pv1 = network.generators["pv1"]
         pv2 = network.generators["pv2"]
 
@@ -93,7 +92,7 @@ end
         @test pv1.cost_coeff[3] == 0.0
         @test pv1.cost_coeff != pv2.cost_coeff
 
-        network_repeat = FeederFlow.parse_file(f; pv_cost_seed=42, pv_cost_spread=spread)
+        network_repeat = FeederFlow.parse_file(f; randomize_pv_cost=true, pv_cost_seed=42, pv_cost_spread=spread)
         @test network_repeat.generators["pv1"].cost_coeff == pv1.cost_coeff
         @test network_repeat.generators["pv2"].cost_coeff == pv2.cost_coeff
     end

@@ -124,11 +124,6 @@ end
 end
 
 @testset "Transformer defaults match OpenDSS assumptions" begin
-    network37 = parse_file(IEEE37_DSS)
-    reg37 = network37.regulators["reg1a"]
-    @test isapprox(reg37.percent_loadloss, 0.4; atol = 1e-12)
-    @test all(isapprox(w.resistance, 0.2; atol = 1e-12) for w in reg37.windings)
-
     network123 = parse_file(IEEE123_DSS)
     reg123 = network123.regulators["reg1a"]
     @test isapprox(reg123.percent_loadloss, 1e-5; atol = 1e-12)

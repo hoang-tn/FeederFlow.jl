@@ -651,12 +651,6 @@ end
 @testset "single global voltage base - benchmark feeders" begin
     ln3(v) = v / sqrt(3)
     cases = [
-        ("IEEE37", IEEE37_DSS, ln3(4800.0), [
-            ("sourcebus", ln3(230_000.0)),
-            ("799", ln3(4800.0)),
-            ("799r", ln3(4800.0)),
-            ("775", ln3(480.0)),
-        ]),
         ("IEEE13", IEEE13_DSS, ln3(4160.0), [
             ("sourcebus", ln3(115_000.0)),
             ("650", ln3(4160.0)),

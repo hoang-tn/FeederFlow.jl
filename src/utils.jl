@@ -15,6 +15,12 @@ Return the canonical balanced three-phase slack phasors
 """
 balanced_slack() = ComplexF64[1.0 + 0im, cis(-2pi / 3), cis(2pi / 3)]
 
+"""
+    source_slack(source, base) -> Vector{ComplexF64}
+
+Build the slack-bus phasor vector: balanced three-phase at `source.pu` and
+`source.angle_deg`, scaled from source kV to the global `base.Vbase`.
+"""
 function source_slack(source::SourceSpec, base::BaseQuantities)
     scale = source.pu * kv_to_vbase(source.basekv, source.phases) / base.Vbase
     return scale .* balanced_slack() .* cis(deg2rad(source.angle_deg))
@@ -158,6 +164,7 @@ function ensure_vector(value::Any)
     return [value]
 end
 
+"""Map OpenDSS connection strings (`wye`/`ln`/`y` or `delta`/`ll`/`d`) to `:wye` or `:delta`."""
 function parse_conn(value::Any)
     text = normalize_name(value)
     if text in ("wye", "ln", "y")
@@ -260,6 +267,12 @@ function bus_terminal_text(value::Any)
     return strip(dss_string(value))
 end
 
+"""
+    parse_bus_terminal(value; nphases=nothing, preserve_order=false) -> TerminalSpec
+
+Parse an OpenDSS bus terminal token (`bus`, `bus.phase`, or `bus.1.2.3`) into a
+`TerminalSpec`. When no conductors are listed, `nphases` defaults to `1:nphases`.
+"""
 function parse_bus_terminal(value::Any; nphases::Union{Nothing,Int} = nothing, preserve_order::Bool = false)
     raw = bus_terminal_text(value)
     parts = split(replace(raw, ['[', ']', '(', ')'] => ""), '.')
@@ -309,6 +322,11 @@ function lower_triangle_to_matrix(rows::Vector{Vector{Float64}}, n::Int)
     return matrix
 end
 
+"""
+    sequence_to_phase_matrix(z1, z0) -> Matrix{ComplexF64}
+
+Symmetric-component to phase-domain impedance: `A * diag(z0, z1, z1) * A⁻¹`.
+"""
 function sequence_to_phase_matrix(z1::ComplexF64, z0::ComplexF64)
     a = cis(2pi / 3)
     A = ComplexF64[1 1 1; 1 a^2 a; 1 a a^2]
@@ -317,6 +335,12 @@ end
 
 phase_unit(phase::Int) = SVector{3,Float64}(phase == 1 ? 1.0 : 0.0, phase == 2 ? 1.0 : 0.0, phase == 3 ? 1.0 : 0.0)
 
+"""
+    delta_incidence(phases) -> Matrix{ComplexF64}
+
+Delta connection incidence matrix mapping branch currents to phase nodes.
+Three-phase uses the cyclic `[1,-1,0; 0,1,-1; -1,0,1]` pattern.
+"""
 function delta_incidence(phases::Vector{Int})
     phases = modeled_phases(phases; preserve_order = true)
     isempty(phases) && error("Unsupported delta phase set: $phases")
@@ -341,6 +365,12 @@ function delta_incidence(phases::Vector{Int})
     error("Unsupported delta phase set: $phases")
 end
 
+"""
+    wye_incidence(phases) -> Matrix{ComplexF64}
+
+Wye connection incidence matrix. Single-phase terminals written as `.phase.0`
+or `.0.phase` flip winding polarity (relevant for center-tapped secondaries).
+"""
 function wye_incidence(phases::Vector{Int})
     active = modeled_phases(phases; preserve_order = true)
     isempty(active) && error("Unsupported wye phase set: $phases")
@@ -363,6 +393,15 @@ function wye_incidence(phases::Vector{Int})
     return mat
 end
 
+"""
+    kv_to_vbase(kv, phases[, conn=:wye]) -> Float64
+
+Convert OpenDSS nameplate kV to line-to-neutral volts.
+
+- Delta: `kv` is line-to-line, returned as `kv * 1000`.
+- Wye 3-phase: `kv` is line-to-line, returned as `kv * 1000 / √3`.
+- Single-phase wye: `kv` is line-to-neutral, returned as `kv * 1000`.
+"""
 function kv_to_vbase(kv::Float64, phases::Vector{Int}, conn::Symbol=:wye)
     # For delta connections, kv is line-to-line voltage - use directly
     if conn == :delta
@@ -390,6 +429,12 @@ function transformer_winding_voltage(winding)
     return modeled_phase_count(winding.bus.phases) == 3 ? voltage / sqrt(3) : voltage
 end
 
+"""
+    phase_pairs(phases) -> Vector{NTuple{2,Int}}
+
+Enumerate delta branch pairs: `(1,2),(2,3),(3,1)` for three-phase, one pair for
+two-phase, or `(phase, 0)` for single-phase wye-to-ground.
+"""
 function phase_pairs(phases::Vector{Int})
     phases = modeled_phases(phases; preserve_order = true)
     if length(phases) == 3
@@ -405,6 +450,7 @@ function phase_pairs(phases::Vector{Int})
     error("Unsupported phase configuration $phases")
 end
 
+"""Return the Y-bus row index for `(bus, phase)`, or `0` if the node is excluded."""
 function lookup_node_index(ybus::YBusModel, bus::String, phase::Int)
     get(ybus.network_index, BusPhase(bus, phase), 0)
 end
@@ -419,9 +465,3 @@ function stamp_triplet!(rows::Vector{Int}, cols::Vector{Int}, vals::Vector{Compl
     end
 end
 
-const AGENT_DEBUG_LOG_PATH = joinpath(@__DIR__, "..", "debug-51f4bf.log")
-
-function agent_debug_log(location::String, message::String, data::Dict{String,<:Any};
-                         hypothesisId::String = "", runId::String = "")
-    return nothing
-end

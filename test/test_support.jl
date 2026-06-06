@@ -2,20 +2,26 @@ using JSON3
 using LinearAlgebra
 using SparseArrays
 
-const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
+const PKG_ROOT = normpath(joinpath(@__DIR__, ".."))
+const GRID_ROOT = joinpath(PKG_ROOT, "examples", "grids")
 const FIXTURE_ROOT = joinpath(@__DIR__, "fixtures")
-const IEEE13_DSS = joinpath(REPO_ROOT, "FeederFlow.jl", "examples", "grids", "13_bus", "IEEE13Nodeckt.dss")
-const IEEE240_DSS = joinpath(REPO_ROOT, "FeederFlow.jl", "examples", "grids", "240_bus", "Master.dss")
-const IEEE37_DSS = joinpath(REPO_ROOT, "three-phase-modeling", "IEEE 37-bus feeder", "IEEE37openDSSdata", "ieee37opendss.dss")
-const IEEE123_DSS = joinpath(REPO_ROOT, "three-phase-modeling", "IEEE 123-bus feeder", "IEEE123openDSSdata", "IEEE123Master.dss")
-const IEEE906_DSS = joinpath(REPO_ROOT, "three-phase-modeling", "European 906-bus LV feeder", "IEEELVopenDSSdata", "Master.dss")
-const CKT5_DSS = joinpath(REPO_ROOT, "FeederFlow.jl", "examples", "grids", "ckt5", "Master_ckt5.dss")
-const CKT7_DSS = joinpath(REPO_ROOT, "FeederFlow.jl", "examples", "grids", "ckt7", "Master_ckt7.dss")
-const CKT24_DSS = joinpath(REPO_ROOT, "FeederFlow.jl", "examples", "grids", "ckt24", "master_ckt24.dss")
-const IEEE37_DSS_VOLTAGES = joinpath(REPO_ROOT, "three-phase-modeling", "IEEE 37-bus feeder", "IEEE37openDSSdata", "ieee37_EXP_VOLTAGES.CSV")
-const IEEE123_DSS_VOLTAGES = joinpath(REPO_ROOT, "three-phase-modeling", "IEEE 123-bus feeder", "IEEE123openDSSdata", "ieee123_EXP_VOLTAGES.CSV")
+
+const IEEE13_DSS = joinpath(GRID_ROOT, "13_bus", "IEEE13Nodeckt.dss")
+const IEEE240_DSS = joinpath(GRID_ROOT, "240_bus", "Master.dss")
+const IEEE123_DSS = joinpath(GRID_ROOT, "123_bus", "IEEE123Master.dss")
+const IEEE906_DSS = joinpath(GRID_ROOT, "906_bus", "Master.dss")
+
+# Optional EPRI geometry feeders (not bundled; used only by WIP geometry tests).
+const CKT5_DSS = joinpath(GRID_ROOT, "ckt5", "Master_ckt5.dss")
+const CKT7_DSS = joinpath(GRID_ROOT, "ckt7", "Master_ckt7.dss")
+const CKT24_DSS = joinpath(GRID_ROOT, "ckt24", "master_ckt24.dss")
 
 fixture_path(name::AbstractString) = joinpath(FIXTURE_ROOT, name)
+
+function require_dss(path::AbstractString, label::AbstractString)
+    isfile(path) || error("Missing $label feeder data at $path")
+    return path
+end
 
 function load_fixture(name::AbstractString)
     JSON3.read(read(fixture_path(name), String))

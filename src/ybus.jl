@@ -211,6 +211,14 @@ function _invert_series_impedance(z::Matrix{ComplexF64})
     return inv(z)
 end
 
+"""
+    line_admittance(line; include_shunt=true, ybase=1.0) -> (yseries, yshunt)
+
+Series and shunt admittance blocks for a line segment.
+
+`z = (R + jX) * length` on the linecode impedance base; `yseries = z⁻¹ / ybase`.
+Shunt uses `j 2π f C length` with `C` in nF, also divided by `ybase`.
+"""
 function line_admittance(line::LineDevice; include_shunt::Bool = true, ybase::Float64 = 1.0)
     # Total impedance = per-unit-length * effective length.
     # line.length has already been normalized to match the linecode's units
@@ -221,6 +229,7 @@ function line_admittance(line::LineDevice; include_shunt::Bool = true, ybase::Fl
     return yseries, yshunt
 end
 
+"""Stamp π-model line admittance between `line.from` and `line.to` terminals."""
 function stamp_line!(rows, cols, vals, indexmap, line::LineDevice; include_shunt::Bool = true, ybase::Float64 = 1.0)
     yseries, yshunt = line_admittance(line; include_shunt, ybase)
     self = yseries + 0.5 .* yshunt
@@ -284,12 +293,18 @@ function regulator_series_impedance(transformer::TransformerDevice, base::BaseQu
     return z
 end
 
+"""
+    open_delta_regulator_series_impedance(transformer, base; epsilon=1e-5)
+
+Open-delta regulator leakage impedance with a 3× multiplier on the nameplate term,
+matching IEEE 123 benchmark conventions for two-unit open-delta groups.
+"""
 function open_delta_regulator_series_impedance(transformer::TransformerDevice, base::BaseQuantities; epsilon::Float64 = 1e-5)
     winding = first(transformer.windings)
     downstream = length(transformer.windings) >= 2 ? transformer.windings[end] : winding
     resistance = winding.resistance + downstream.resistance
 
-    # IEEE 37/123 open-delta regulators are benchmarked as a two-unit equivalent
+    # IEEE 123 open-delta regulators are benchmarked as a two-unit equivalent
     # where the series leakage term is three times the per-unit nameplate leakage.
     # This matches the MATLAB benchmark's ztReg construction and keeps the
     # reduced Y-bus and secondary-voltage reconstruction aligned with OpenDSS.
@@ -430,6 +445,15 @@ function stamp_three_winding_transformer!(rows, cols, vals, indexmap, base; epsi
     stamp_winding_admittance_matrix!(rows, cols, vals, indexmap, transformer.windings, yprimitive, transformer.windings[2]; epsilon)
 end
 
+"""
+    stamp_transformer!(rows, cols, vals, indexmap, base; regulator_model, epsilon, transformer)
+
+Stamp two- or three-winding transformer/regulator admittance into Y-bus triplets.
+
+Two-winding devices use connection matrices, tap ratio `a`, and optional ideal-regulator
+mode (`regulator_model == :ideal` zeroes series impedance). Three-winding devices
+use the star-equivalent primitive admittance matrix.
+"""
 function stamp_transformer!(rows, cols, vals, indexmap, base; regulator_model::Symbol, epsilon::Float64, transformer::TransformerDevice)
     length(transformer.windings) >= 2 || return
     if length(transformer.windings) == 3
@@ -483,6 +507,7 @@ function capacitor_branch_voltage(capacitor::CapacitorDevice)
     return capacitor.kv * 1000 / sqrt(3)
 end
 
+"""Stamp shunt capacitor admittance `j kvar / Sbase` at each modeled phase node."""
 function stamp_capacitor!(rows, cols, vals, indexmap, base::BaseQuantities, capacitor::CapacitorDevice)
     vcap = max(capacitor_branch_voltage(capacitor), eps(Float64))
     scale = (base.Vbase / vcap)^2
@@ -565,6 +590,14 @@ function stamp_four_blocks!(rows, cols, vals, idx_n, idx_m, nn, nm, mn, mm)
     stamp_selected_block!(rows, cols, vals, idx_m, idx_m, mm)
 end
 
+"""
+    kron_reduce_partition(matrix, keep, eliminate; singular_tol=1e-11)
+
+Schur complement / Kron reduction: `Ykk - Yke * Yee⁻¹ * Yek`.
+
+Used to eliminate internal open-delta regulator secondary nodes when stamping an
+equivalent two-port admittance between primary and remote buses.
+"""
 function kron_reduce_partition(matrix::AbstractMatrix{<:Complex}, keep::Vector{Int}, eliminate::Vector{Int}; singular_tol::Float64 = 1e-11)
     Y = Matrix{ComplexF64}(matrix)
     isempty(eliminate) && return Matrix{ComplexF64}(Y[keep, keep])

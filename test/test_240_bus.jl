@@ -4,7 +4,7 @@ using LinearAlgebra
 using SparseArrays
 
 @testset "240-bus feeder regression" begin
-    network = parse_file(IEEE240_DSS; regulator_model = :nonideal)
+    network = parse_file(IEEE240_DSS)
 
     @test network.slack_bus == "eq_source_bus"
     @test length(network.buses) == 436

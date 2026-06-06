@@ -36,6 +36,7 @@ function compute_no_load(ybus::YBusModel; v_slack::Vector{ComplexF64} = balanced
     return NoLoadResult(v_slack, w, phase_voltages)
 end
 
+"""Concatenate network and slack phase voltages in `ybus.all_order` layout."""
 function full_voltage_vector(ybus::YBusModel, v_network::Vector{ComplexF64}, v_slack::Vector{ComplexF64})
     return vcat(v_network, v_slack)
 end
@@ -212,11 +213,29 @@ function solve_power_flow(network::NetworkModel; method::Symbol = :zbus, regulat
 end
 
 """
-    solve_case(path; kwargs...)
+    solve_case(path; include_neutral=false, randomize_pv_cost=false, pv_cost_seed=12345,
+               pv_cost_spread=0.5, apply_benchmark_regulator_taps=false,
+               method=:zbus, regulator_model=:nonideal, epsilon=1e-5, max_iter=10, tol=1e-5)
 
-Convenience wrapper for `parse_file(path; kwargs...) |> solve_power_flow`.
+Convenience wrapper for parsing an OpenDSS master file and solving power flow.
 """
-function solve_case(path::AbstractString; kwargs...)
-    network = parse_file(path; kwargs...)
-    return solve_power_flow(network; kwargs...)
+function solve_case(path::AbstractString;
+                    include_neutral::Bool = false,
+                    randomize_pv_cost::Bool = false,
+                    pv_cost_seed::Integer = 12345,
+                    pv_cost_spread::Real = 0.5,
+                    apply_benchmark_regulator_taps::Bool = false,
+                    method::Symbol = :zbus,
+                    regulator_model::Symbol = :nonideal,
+                    epsilon::Float64 = 1e-5,
+                    max_iter::Int = 10,
+                    tol::Float64 = 1e-5)
+    network = parse_file(path;
+        include_neutral = include_neutral,
+        randomize_pv_cost = randomize_pv_cost,
+        pv_cost_seed = pv_cost_seed,
+        pv_cost_spread = pv_cost_spread,
+        apply_benchmark_regulator_taps = apply_benchmark_regulator_taps,
+    )
+    return solve_power_flow(network; method, regulator_model, epsilon, max_iter, tol)
 end

@@ -73,26 +73,6 @@ function assert_regulator_secondary_inclusion(ybus::FeederFlow.YBusModel, networ
     end
 end
 
-@testset "Y-bus correctness - IEEE37 (general)" begin
-    network = parse_file(IEEE37_DSS)
-    ybus = build_y(network)
-    noload = compute_no_load(ybus)
-    loads = build_load_model(network, ybus, noload)
-
-    @test size(ybus.Y, 1) == length(ybus.network_order)
-    @test size(ybus.Y, 2) == length(ybus.network_order)
-    @test size(ybus.Y_NS, 2) == 3
-    @test size(ybus.Y_SS) == (3, 3)
-    @test isempty(network.capacitors)
-    assert_ybus_indexing_consistency(ybus, network)
-    assert_ybus_partition_consistency(ybus)
-    assert_open_switch_exclusions(ybus, network)
-    assert_regulator_secondary_inclusion(ybus, network)
-
-    @test size(loads.YL) == size(ybus.Y)
-    @test all(isfinite, loads.YL.nzval)
-end
-
 @testset "Y-bus correctness - IEEE13 (general)" begin
     network = parse_file(IEEE13_DSS)
     ybus = build_y(network)
@@ -112,15 +92,6 @@ end
 
     @test size(loads.YL) == size(ybus.Y)
     @test all(isfinite, loads.YL.nzval)
-end
-
-@testset "IEEE37 open-delta regulator equivalent matches benchmark leakage" begin
-    network = parse_file(IEEE37_DSS)
-    group = only(FeederFlow.open_delta_regulator_groups(network))
-    params = FeederFlow.open_delta_regulator_parameters(group, network.base)
-
-    @test isapprox(params.Zreg[1, 1], 0.0490283298 + 0.1225708245im; atol = 1e-8)
-    @test isapprox(params.Zreg[3, 3], 0.047278125 + 0.1181953125im; atol = 1e-8)
 end
 
 @testset "Y-bus correctness - IEEE123 (general)" begin

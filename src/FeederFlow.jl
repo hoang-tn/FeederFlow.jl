@@ -49,15 +49,10 @@ export AnalysisBundle,
     compute_bus_voltage_bases,
     compute_no_load,
     get_normalized_result,
-    get_voltages_local_base,
     normalize_result_to_local_bases,
-    normalize_voltage_to_bus_base,
     parse_file,
-    patch_switch_admittance!,
     scaled_ybus_matrix,
     solve_case,
-    solve_power_flow,
-    switch_line_admittance,
-    verify_switch_admittance_patch
+    solve_power_flow
 
 end

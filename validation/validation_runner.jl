@@ -4,13 +4,13 @@ Validation runner - orchestrates scenario execution and comparison.
 Main module for running FeederFlow vs OpenDSS validation scenarios.
 """
 
+using FeederFlow
 using Printf
 using Logging
 
-# Import validation modules
-include("scenarios.jl")
-include("opendss_interface.jl")
-include("validation_stats.jl")
+include(joinpath(@__DIR__, "scenarios.jl"))
+include(joinpath(@__DIR__, "opendss_interface.jl"))
+include(joinpath(@__DIR__, "validation_stats.jl"))
 
 """
     NetworkConfig
@@ -30,59 +30,36 @@ end
 Return registry of available test networks.
 """
 function get_network_registry()
-    repo_root = normpath(joinpath(@__DIR__, "..", ".."))
-    
+    pkg_root = normpath(joinpath(@__DIR__, ".."))
+    grid_root = joinpath(pkg_root, "examples", "grids")
+
     networks = Dict{String,NetworkConfig}(
         "ieee13" => NetworkConfig(
             "ieee13",
-            joinpath(repo_root, "FeederFlow.jl", "examples", "grids", "13_bus", "IEEE13Nodeckt.dss"),
-            false,  # Will be auto-detected
-            "IEEE 13-bus test feeder"
+            joinpath(grid_root, "13_bus", "IEEE13Nodeckt.dss"),
+            false,
+            "IEEE 13-bus test feeder",
         ),
         "ieee240" => NetworkConfig(
             "ieee240",
-            joinpath(repo_root, "FeederFlow.jl", "examples", "grids", "240_bus", "Master.dss"),
+            joinpath(grid_root, "240_bus", "Master.dss"),
             true,
-            "IEEE 240-bus test feeder"
-        ),
-        "ieee37" => NetworkConfig(
-            "ieee37",
-            joinpath(repo_root, "three-phase-modeling", "IEEE 37-bus feeder", "IEEE37openDSSdata", "ieee37opendss.dss"),
-            true,
-            "IEEE 37-bus test feeder"
+            "IEEE 240-bus test feeder",
         ),
         "ieee123" => NetworkConfig(
             "ieee123",
-            joinpath(repo_root, "three-phase-modeling", "IEEE 123-bus feeder", "IEEE123openDSSdata", "IEEE123Master.dss"),
+            joinpath(grid_root, "123_bus", "IEEE123Master.dss"),
             true,
-            "IEEE 123-bus test feeder"
+            "IEEE 123-bus test feeder",
         ),
         "ieee906" => NetworkConfig(
             "ieee906",
-            joinpath(repo_root, "three-phase-modeling", "European 906-bus LV feeder", "IEEELVopenDSSdata", "Master.dss"),
+            joinpath(grid_root, "906_bus", "Master.dss"),
             false,
-            "European 906-bus LV test feeder"
-        ),
-        "ckt5" => NetworkConfig(
-            "ckt5",
-            joinpath(repo_root, "FeederFlow.jl", "examples", "grids", "ckt5", "Master_ckt5.dss"),
-            true,
-            "EPRI ckt5 test feeder (geometry-based OH lines)"
-        ),
-        "ckt7" => NetworkConfig(
-            "ckt7",
-            joinpath(repo_root, "FeederFlow.jl", "examples", "grids", "ckt7", "Master_ckt7.dss"),
-            false,
-            "EPRI ckt7 test feeder (linecode-based)"
-        ),
-        "ckt24" => NetworkConfig(
-            "ckt24",
-            joinpath(repo_root, "FeederFlow.jl", "examples", "grids", "ckt24", "master_ckt24.dss"),
-            true,
-            "EPRI ckt24 test feeder (geometry-based OH lines)"
+            "European 906-bus LV test feeder",
         ),
     )
-    
+
     return networks
 end
 

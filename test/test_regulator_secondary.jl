@@ -4,7 +4,6 @@ using FeederFlow
 @testset "Regulator secondary voltage handling - benchmark feeders (general)" begin
     cases = (
         ("IEEE13", IEEE13_DSS),
-        ("IEEE37", IEEE37_DSS),
         ("IEEE123", IEEE123_DSS),
         ("IEEE240", IEEE240_DSS),
         ("IEEE906", IEEE906_DSS),

@@ -719,6 +719,13 @@ function handle_edit!(state::DSSState, command::AbstractString, file::String, li
     return state
 end
 
+"""
+    parse_dss(path) -> DSSState
+
+Tokenize and execute OpenDSS commands from `path`, following `Redirect`/`Compile`
+chains via `collect_commands`. Returns raw parsed object state before component
+construction.
+"""
 function parse_dss(path::AbstractString)
     state = DSSState()
     commands = collect_commands(path)
@@ -1354,6 +1361,15 @@ function build_source(state::DSSState)
     )
 end
 
+"""
+    infer_base_quantities(source, transformers) -> BaseQuantities
+
+Choose global `(Sbase, Vbase, Zbase, Ybase)` for per-unit assembly.
+
+When a source-connected transformer exists, use its largest-kVA winding and prefer
+the downstream (secondary) kV for `Vbase` (MATLAB-style). Otherwise default to
+1 MVA and source `basekv`.
+"""
 function infer_base_quantities(source::SourceSpec, transformers::Vector{TransformerDevice})
     candidates = TransformerDevice[]
     for transformer in transformers
@@ -1457,6 +1473,7 @@ function compute_bus_voltage_bases(source::SourceSpec,
     return bus_vbase
 end
 
+"""Convenience wrapper: `compute_bus_voltage_bases` for all buses in `network`."""
 function compute_bus_voltage_bases(network::NetworkModel)
     bus_names = String[bus.name for bus in network.buses]
     return compute_bus_voltage_bases(network.source, network.transformers, network.lines, network.regulators, bus_names)
@@ -1555,7 +1572,7 @@ function convert_lines_to_pu(lines::Vector{LineDevice}, base::BaseQuantities)
 end
 
 """
-    parse_file(path; include_neutral=false, randomize_pv_cost=true, pv_cost_seed=12345, pv_cost_spread=0.5, kwargs...)
+    parse_file(path; include_neutral=false, randomize_pv_cost=false, pv_cost_seed=12345, pv_cost_spread=0.5, apply_benchmark_regulator_taps=false)
 
 Parse an OpenDSS feeder entry file into a `NetworkModel`.
 
@@ -1570,11 +1587,13 @@ properties, collects component provenance, and infers per-unit base quantities.
   - `false` (default): Filter phase 0 from bus phases. Neutral is treated as ground (V=0).
     This is the standard 3-wire model for distribution feeders.
   - `true`: Keep phase 0 for explicit 4-wire modeling with neutral conductor.
-- `randomize_pv_cost::Bool = true`: When true, assign each PV a distinct cost curve by
+- `randomize_pv_cost::Bool = false`: When true, assign each PV a distinct cost curve by
   uniform multiplicative jitter around `DEFAULT_PV_COST_COEFF`.
 - `pv_cost_seed::Integer = 12345`: RNG seed for reproducible PV cost randomization.
 - `pv_cost_spread::Real = 0.5`: Half-width of uniform jitter; each coefficient is scaled by
   `U(1 - spread, 1 + spread)`.
+- `apply_benchmark_regulator_taps::Bool = false`: When true, apply feeder-specific regulator
+  tap overrides used in internal benchmark cases (for example IEEE 8500).
 
 The filtering happens in `add_bus_phases!` which is called for all buses.
 When disabled, loads connect to neutral via `(phase, 0)` pairs with implicit ground reference.
@@ -1594,10 +1613,10 @@ network = parse_file("Master.dss"; randomize_pv_cost=false)
 function parse_file(
     path::AbstractString;
     include_neutral::Bool = false,
-    randomize_pv_cost::Bool = true,
-    pv_cost_seed::Integer = 1,
+    randomize_pv_cost::Bool = false,
+    pv_cost_seed::Integer = 12345,
     pv_cost_spread::Real = 0.5,
-    kwargs...,
+    apply_benchmark_regulator_taps::Bool = false,
 )
     state = parse_dss(path)
     linecodes = Dict{String,LineCode}()
@@ -1663,7 +1682,9 @@ function parse_file(
         )
     end
     regulators = [transformer for transformer in transformers if transformer.is_regulator]
-    regulators = apply_known_regulator_taps(source, regulators)
+    if apply_benchmark_regulator_taps
+        regulators = apply_known_regulator_taps(source, regulators)
+    end
     fixed_transformers = [transformer for transformer in transformers if !transformer.is_regulator]
     bus_phase_sets = Dict{String,Set{Int}}()
     for line in lines

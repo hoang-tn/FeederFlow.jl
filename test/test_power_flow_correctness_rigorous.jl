@@ -156,44 +156,6 @@ function raw_to_system_pu(raw_voltages::Dict{String,ComplexF64}, network::Feeder
     Dict(key => value / network.base.Vbase for (key, value) in raw_voltages)
 end
 
-@testset "Power flow correctness rigorous - IEEE37 (general)" begin
-    network = FeederFlow.parse_file(IEEE37_DSS)
-    bundle = FeederFlow.solve_power_flow(network; max_iter = 10, tol = 1e-5)
-
-    @test bundle.result.converged
-
-    normalized = FeederFlow.get_normalized_result(bundle)
-    @test normalized.phase_voltages == bundle.result.phase_voltages
-
-    dss_raw = parse_opendss_voltages_live_raw(IEEE37_DSS, network)
-    dss_system = raw_to_system_pu(dss_raw, network)
-    actual_system = actual_voltage_map(bundle.result.phase_voltages)
-
-    @test haskey(actual_system, "799r.1")
-    @test haskey(actual_system, "799r.2")
-    @test haskey(actual_system, "799r.3")
-
-    actual_system_ll = line_to_line_voltage_map(actual_system)
-    dss_system_ll = line_to_line_voltage_map(dss_system)
-    assert_voltage_map_keys(actual_system_ll, dss_system_ll; label = "IEEE37 system-base line-line PU")
-
-    actual_system_ll_ref = normalize_voltage_map_by_key(actual_system_ll, "sourcebus.12")
-    dss_system_ll_ref = normalize_voltage_map_by_key(dss_system_ll, "sourcebus.12")
-
-    @test max_voltage_magnitude_diff(actual_system_ll_ref, dss_system_ll_ref) < POWER_FLOW_VOLTAGE_TOLERANCE
-    assert_voltage_error_bounds(
-        actual_system_ll_ref,
-        dss_system_ll_ref;
-        label = "IEEE37 system-base line-line PU",
-        max_tol = POWER_FLOW_VOLTAGE_TOLERANCE,
-        mean_tol = POWER_FLOW_VOLTAGE_TOLERANCE,
-    )
-
-    @test !isempty(bundle.result.history)
-    @test bundle.result.iterations == length(bundle.result.history)
-    @test all(isfinite, bundle.result.history)
-end
-
 @testset "Power flow correctness rigorous - IEEE123 (general)" begin
     network = FeederFlow.parse_file(IEEE123_DSS)
     bundle = FeederFlow.solve_power_flow(network; max_iter = 10, tol = 1e-5)

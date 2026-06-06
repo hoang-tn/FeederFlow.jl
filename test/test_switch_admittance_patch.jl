@@ -3,15 +3,13 @@ using FeederFlow
 using LinearAlgebra
 
 const SWITCH_PATCH_TOL = 1e-8
-const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
 switch_patch_tol(label::AbstractString) = label == "IEEE240" ? 2e-7 : SWITCH_PATCH_TOL
 
 benchmark_cases() = [
-    ("IEEE13", joinpath(REPO_ROOT, "FeederFlow.jl", "examples", "grids", "13_bus", "IEEE13Nodeckt.dss")),
-    ("IEEE37", joinpath(REPO_ROOT, "FeederFlow.jl", "examples", "grids", "37_bus", "ieee37.dss")),
-    ("IEEE123", joinpath(REPO_ROOT, "FeederFlow.jl", "examples", "grids", "123_bus", "IEEE123Master.dss")),
-    ("IEEE240", joinpath(REPO_ROOT, "FeederFlow.jl", "examples", "grids", "240_bus", "Master.dss")),
+    ("IEEE13", IEEE13_DSS),
+    ("IEEE123", IEEE123_DSS),
+    ("IEEE240", IEEE240_DSS),
     ("IEEE906", IEEE906_DSS),
 ]
 
@@ -55,7 +53,7 @@ end
 @testset "Switch admittance patch" begin
     for (label, path) in benchmark_cases()
         @testset "$label batched switch toggles" begin
-            network = FeederFlow.parse_file(path; regulator_model = :nonideal)
+            network = FeederFlow.parse_file(path)
             network, ybus, scales, Y_scaled_base, names = prepare_switch_case(network)
             tol = switch_patch_tol(label)
 
@@ -75,7 +73,7 @@ end
         end
 
         @testset "$label cumulative switch updates" begin
-            network = FeederFlow.parse_file(path; regulator_model = :nonideal)
+            network = FeederFlow.parse_file(path)
             network, ybus, scales, Y_scaled_base, names = prepare_switch_case(network)
             tol = switch_patch_tol(label)
 
@@ -99,7 +97,7 @@ end
         end
 
         @testset "$label legacy single-line helper" begin
-            network = FeederFlow.parse_file(path; regulator_model = :nonideal)
+            network = FeederFlow.parse_file(path)
             network, ybus, scales, Y_scaled_base, names = prepare_switch_case(network)
             tol = switch_patch_tol(label)
 
@@ -125,7 +123,7 @@ end
         end
 
         @testset "$label base-state no-op" begin
-            network = FeederFlow.parse_file(path; regulator_model = :nonideal)
+            network = FeederFlow.parse_file(path)
             network, ybus, scales, Y_scaled_base, names = prepare_switch_case(network)
 
             @test !isempty(names)

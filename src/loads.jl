@@ -1,3 +1,16 @@
+"""
+    load_mode(model::Int) -> Symbol
+
+Map an OpenDSS load `model` integer to an internal mode symbol:
+
+| OpenDSS | Symbol  | Description              |
+|---------|---------|--------------------------|
+| 1       | `:pq`   | constant P/Q             |
+| 2       | `:z`    | constant impedance (ZIP) |
+| 3       | `:motor`| constant P, quadratic Q  |
+| 4       | `:cvr`  | ZIP with CVR exponents   |
+| 5       | `:i`    | constant current         |
+"""
 function load_mode(model::Int)
     if model == 1
         return :pq
@@ -13,6 +26,14 @@ function load_mode(model::Int)
     error("Unsupported OpenDSS load model $model")
 end
 
+"""
+    branch_pairs(load::LoadDevice) -> Vector{NTuple{2,Int}}
+
+Decompose a load into wye `(phase, 0)` or delta `(p, q)` branch pairs.
+
+For single-phase delta loads, OpenDSS connects the specified phase to the next
+cyclic phase (1→2, 2→3, 3→1).
+"""
 function branch_pairs(load::LoadDevice)
     if load.conn == :wye
         return [(phase, 0) for phase in load.bus.phases]
@@ -31,12 +52,26 @@ function branch_pairs(load::LoadDevice)
     return phase_pairs(load.bus.phases)
 end
 
+"""
+    branch_powers(load, pair_count, base) -> Vector{ComplexF64}
+
+Split the load's total per-unit `p_pu + j*q_pu` equally across `pair_count` branches.
+"""
 function branch_powers(load::LoadDevice, pair_count::Int, base::BaseQuantities)
     # p_pu and q_pu are already in per-unit, no conversion needed
     total = complex(load.p_pu, load.q_pu)
     return fill(total / pair_count, pair_count)
 end
 
+"""
+    build_load_reference_vectors(network, ybus, noload) -> (p_load_ref, q_load_ref)
+
+Assemble per-node active/reactive reference powers by evaluating each load branch
+at no-load voltages.
+
+For wye branches the terminal power is `V_p * conj(I)`; for delta branches the
+pair current is `conj(S / (V_p - V_q))` and power is stamped on both terminals.
+"""
 function build_load_reference_vectors(network::NetworkModel, ybus::YBusModel, noload::NoLoadResult)
     n = length(ybus.network_order)
     p_load_ref = zeros(Float64, n)
@@ -86,6 +121,11 @@ function build_load_reference_vectors(network::NetworkModel, ybus::YBusModel, no
     return p_load_ref, q_load_ref
 end
 
+"""
+    generator_branch_pairs(generator) -> Vector{NTuple{2,Int}}
+
+Same wye/delta branch decomposition as `branch_pairs`, applied to generators.
+"""
 function generator_branch_pairs(generator::GeneratorDevice)
     if generator.conn == :wye
         return [(phase, 0) for phase in generator.bus.phases]
@@ -101,6 +141,12 @@ function generator_branch_pairs(generator::GeneratorDevice)
     return phase_pairs(generator.bus.phases)
 end
 
+"""
+    generator_branch_powers(generator, pair_count) -> Vector{ComplexF64}
+
+Derive per-branch negative complex power from `p_pu` and power factor, clamped to
+`[qmin_pu, qmax_pu]`, and split equally across branches for the Z-bus solver.
+"""
 function generator_branch_powers(generator::GeneratorDevice, pair_count::Int)
     p = generator.p_pu
     pf_mag = clamp(abs(generator.pf), 0.0, 1.0)
@@ -116,6 +162,12 @@ function generator_branch_powers(generator::GeneratorDevice, pair_count::Int)
     return fill(total / pair_count, pair_count)
 end
 
+"""
+    branch_voltage_base_pu(device, base) -> Float64
+
+Nominal branch voltage magnitude in global per-unit (`device.kv` converted via
+`kv_to_vbase` and divided by `base.Vbase`).
+"""
 function branch_voltage_base_pu(load::LoadDevice, base::BaseQuantities)
     actual_voltage = kv_to_vbase(load.kv, load.bus.phases, load.conn)
     return actual_voltage / base.Vbase
@@ -126,6 +178,13 @@ function branch_voltage_base_pu(generator::GeneratorDevice, base::BaseQuantities
     return actual_voltage / base.Vbase
 end
 
+"""
+    nominal_branch_voltage(load, pair, noload, nominal_base_pu) -> ComplexF64
+
+Return the reference branch phasor used for Z-model stamping: phase voltage for
+wye `(p, 0)` or line-to-line difference for delta `(p, q)`, normalized to
+`nominal_base_pu` magnitude.
+"""
 function nominal_branch_voltage(load::LoadDevice, pair::NTuple{2,Int}, noload::NoLoadResult, nominal_base_pu::Float64)
     vp = get(noload.phase_voltages, BusPhase(load.bus.bus, pair[1]), noload.slack[pair[1]])
     base = if pair[2] == 0
@@ -139,6 +198,14 @@ function nominal_branch_voltage(load::LoadDevice, pair::NTuple{2,Int}, noload::N
     return nominal_base_pu * base / mag
 end
 
+"""
+    add_branch_stamp!(rows, cols, vals, p, q, y)
+
+Stamp a series admittance `y` between nodes `p` and `q` into sparse triplet lists.
+
+For wye branches (`q == 0`) only the diagonal `Y[p,p] += y` is stamped; for delta
+branches the standard 2×2 off-diagonal pattern is used.
+"""
 function add_branch_stamp!(rows, cols, vals, p::Int, q::Int, y::ComplexF64)
     push!(rows, p)
     push!(cols, p)
@@ -254,12 +321,14 @@ function build_load_model(network::NetworkModel, ybus::YBusModel, noload::NoLoad
     return LoadModel(contributions, YL, summary)
 end
 
+"""Branch voltage for pair `(p, q)`: `v[p]` for wye or `v[p] - v[q]` for delta."""
 function pair_voltage(v::AbstractVector{ComplexF64}, pair::NTuple{2,Int})
     p, q = pair
     q == 0 && return v[p]
     return v[p] - v[q]
 end
 
+"""Kirchhoff stamp: `I_p += I`, `I_q -= I` for delta pairs."""
 function accumulate_pair_current!(currents::Vector{ComplexF64}, pair::NTuple{2,Int}, current::ComplexF64)
     p, q = pair
     currents[p] += current
@@ -279,6 +348,14 @@ function load_injection_current(value::ComplexF64, voltage::ComplexF64, ::Float6
     return conj(value / voltage)
 end
 
+"""
+    load_currents(loads, v) -> Vector{ComplexF64}
+
+Evaluate nonlinear load/generator current injections at network voltages `v`.
+
+Each `LoadContribution` applies its OpenDSS model (`:pq`, `:i`, `:cvr`, `:motor`)
+to the branch voltage and accumulates terminal currents via `accumulate_pair_current!`.
+"""
 function load_currents(loads::LoadModel, v::Vector{ComplexF64})
     currents = zeros(ComplexF64, length(v))
     for contribution in loads.contributions

@@ -49,18 +49,30 @@ function manual_load_reference_vectors(network, ybus, noload)
 end
 
 @testset "build_load_reference_vectors - delta loads" begin
-    network = FeederFlow.parse_file(IEEE37_DSS; regulator_model = :nonideal)
-    ybus = FeederFlow.build_y(network; regulator_model = :nonideal, epsilon = 1e-5)
-    v_slack = FeederFlow.source_slack(network.source, network.base)
-    noload = FeederFlow.compute_no_load(ybus; v_slack = v_slack)
+    mktempdir() do dir
+        dss = joinpath(dir, "delta_load.dss")
+        write(dss, join([
+            "Clear",
+            "New Circuit.test bus1=sourcebus basekv=12.47 pu=1.0",
+            "New Line.line bus1=sourcebus.1.2.3 bus2=loadbus.1.2.3 phases=3 length=1 units=mi",
+            "New Linecode.lc nphases=3 r1=0.01 x1=0.02",
+            "Edit Line.line linecode=lc",
+            "New Load.ld phases=2 bus1=loadbus.1.3 conn=delta model=1 kv=4.16 kw=100 kvar=50",
+        ], "\n"))
 
-    @test any(load.conn == :delta for load in network.loads)
+        network = FeederFlow.parse_file(dss)
+        ybus = FeederFlow.build_y(network; regulator_model = :nonideal, epsilon = 1e-5)
+        v_slack = FeederFlow.source_slack(network.source, network.base)
+        noload = FeederFlow.compute_no_load(ybus; v_slack = v_slack)
 
-    helper_p, helper_q = FeederFlow.build_load_reference_vectors(network, ybus, noload)
-    expected_p, expected_q = manual_load_reference_vectors(network, ybus, noload)
+        @test any(load.conn == :delta for load in network.loads)
 
-    @test helper_p ≈ expected_p atol = 1e-12 rtol = 0.0
-    @test helper_q ≈ expected_q atol = 1e-12 rtol = 0.0
-    @test isapprox(sum(helper_p), sum(load.p_pu for load in network.loads); atol = 1e-12, rtol = 0.0)
-    @test isapprox(sum(helper_q), sum(load.q_pu for load in network.loads); atol = 1e-12, rtol = 0.0)
+        helper_p, helper_q = FeederFlow.build_load_reference_vectors(network, ybus, noload)
+        expected_p, expected_q = manual_load_reference_vectors(network, ybus, noload)
+
+        @test helper_p ≈ expected_p atol = 1e-12 rtol = 0.0
+        @test helper_q ≈ expected_q atol = 1e-12 rtol = 0.0
+        @test isapprox(sum(helper_p), sum(load.p_pu for load in network.loads); atol = 1e-12, rtol = 0.0)
+        @test isapprox(sum(helper_q), sum(load.q_pu for load in network.loads); atol = 1e-12, rtol = 0.0)
+    end
 end

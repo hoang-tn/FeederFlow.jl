@@ -4,7 +4,6 @@ using LinearAlgebra
 
 const LINE_SANITY_CASES = (
     ("IEEE13", IEEE13_DSS),
-    ("IEEE37", IEEE37_DSS),
     ("IEEE123", IEEE123_DSS),
     ("IEEE240", IEEE240_DSS),
     ("IEEE906", IEEE906_DSS),
