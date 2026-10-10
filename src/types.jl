@@ -121,13 +121,23 @@ struct BaseQuantities
     Ybase::Float64
 end
 
+const DEFAULT_SOURCE_COST_COEFF = Float64[1.0, 100.0, 0.0]
+
 """
     SourceSpec(name, bus, phases, basekv, pu, angle_deg[, cost_coeff[, conn]])
 
-Specification of the feeder source/slack definition.
-"""
-const DEFAULT_SOURCE_COST_COEFF = Float64[1.0, 100.0, 0.0]
+Feeder source (slack) definition, parsed from the OpenDSS circuit/`Vsource`.
 
+Fields:
+- `name`, `bus`, `phases`: Source identifier and connection point
+- `basekv`: Nominal line-to-line voltage (kV)
+- `pu`, `angle_deg`: Voltage magnitude (pu) and phase-A angle (degrees)
+- `cost_coeff`: Cost-curve coefficients for OPF (default `[1.0, 100.0, 0.0]`)
+- `conn`: `:wye` or `:delta`
+- `r1`, `x1`, `r0`, `x0`: Positive- and zero-sequence source impedance
+
+Shorter constructors fill the remaining fields with defaults.
+"""
 struct SourceSpec
     name::String
     bus::String
@@ -180,14 +190,13 @@ end
 """
     BusSpec(name, phases[, vmin_pu, vmax_pu])
 
-Per-bus phase availability metadata with voltage limits and nominal base.
+Bus metadata: available phases, voltage limits, and local voltage base.
 
 Fields:
 - `name`: Bus identifier
-- `phases`: Available phase indices
-- `vmin_pu`: Minimum voltage magnitude (pu), default 0.9
-- `vmax_pu`: Maximum voltage magnitude (pu), default 1.1
-- `vbase`: Nominal line-to-neutral voltage base (V)
+- `phases`: Available phase numbers
+- `vmin_pu`, `vmax_pu`: Voltage magnitude limits in pu (default 0.9 and 1.1)
+- `vbase`: Nominal line-to-neutral voltage base (V); `NaN` until it is inferred
 """
 mutable struct BusSpec
     name::String
@@ -210,14 +219,12 @@ Line impedance and capacitance template parsed from OpenDSS linecode objects.
 
 Fields:
 - `name`: Linecode identifier
-- `nphases`: Number of phases (default 3)
-- `rmatrix`: Resistance matrix (Ω per unit length)
-- `xmatrix`: Reactance matrix (Ω per unit length)
-- `cmatrix`: Capacitance matrix (nF per unit length)
-- `units`: Length unit string ("none", "mi", "kft", "km", "m", "ft")
-- `basefreq`: Base frequency for capacitance calculation (default 60 Hz)
-- `normamps`: Normal amperage rating (default 400 A)
-- `emergamps`: Emergency amperage rating (default 600 A)
+- `nphases`: Number of phases
+- `rmatrix`, `xmatrix`: Series resistance and reactance matrices (Ω per unit length)
+- `cmatrix`: Shunt capacitance matrix (nF per unit length)
+- `units`: Length unit (`"none"`, `"mi"`, `"kft"`, `"km"`, `"m"`, `"ft"`; default `"none"`)
+- `basefreq`: Frequency used for the capacitance calculation (default 60 Hz)
+- `normamps`, `emergamps`: Normal and emergency current ratings (A; default 400 and 600)
 """
 struct LineCode
     name::String
@@ -234,8 +241,8 @@ end
 """
     WireData(name, rac, rdc, gmrac, capradius, normamps, emergamps)
 
-Overhead conductor catalog entry parsed from OpenDSS `WireData` objects.
-All electrical quantities are stored in SI per-meter units (Ω/m, m).
+Overhead conductor catalog entry parsed from an OpenDSS `WireData` object.
+Values are stored in SI units (Ω/m for resistance, m for lengths).
 """
 struct WireData
     name::String
@@ -250,8 +257,9 @@ end
 """
     LineGeometry(name, nconds, nphases, reduce, wires, xs, hs)
 
-Physical conductor layout parsed from OpenDSS `LineGeometry` objects.
-Positions `xs` and `hs` are in meters; `wires` holds WireData names per conductor.
+Conductor layout parsed from an OpenDSS `LineGeometry` object.
+`xs` and `hs` are each conductor's horizontal position and height in meters,
+and `wires` holds the `WireData` name used for each conductor.
 """
 struct LineGeometry
     name::String
@@ -271,23 +279,22 @@ end
 """
     LineDevice(...)
 
-Concrete line element with resolved geometry/electrical data and provenance.
+Line element with its impedance data resolved from a linecode or line geometry.
 
 Fields:
 - `name`: Line identifier
-- `from`, `to`: Terminal specifications
-- `phases`: Phase indices
-- `linecode_name`: Name of associated linecode (if any)
-- `length`: Line length in linecode units
-- `rmatrix`, `xmatrix`, `cmatrix`: Impedance/capacitance matrices
-- `units`: Length unit string from linecode ("none", "mi", "kft", "km", "m", "ft")
-- `basefreq`: Base frequency for shunt capacitance (Hz)
-- `provenance`: Source file information
-- `is_switch`: True if this line was defined with Switch=y
-- `is_closed_base`: Initial closed state parsed from the source data
-- `is_closed`: Mutable closed state used during perturbation/data generation
-- `normamps`: Normal current rating (A) — converted to pu after parse_file
-- `emergamps`: Emergency current rating (A) — converted to pu after parse_file
+- `from`, `to`: Terminals (`TerminalSpec`)
+- `phases`: Phase numbers
+- `linecode_name`: Name of the linecode, or `nothing`
+- `length`: Line length, in `units`
+- `rmatrix`, `xmatrix`, `cmatrix`: Per-unit-length R, X, and C matrices
+- `units`: Length unit (`"none"`, `"mi"`, `"kft"`, `"km"`, `"m"`, `"ft"`)
+- `basefreq`: Frequency used for shunt capacitance (Hz)
+- `provenance`: Where the line was defined
+- `is_switch`: `true` if defined with `Switch=y`
+- `is_closed_base`: Closed state as parsed from the DSS file
+- `is_closed`: Current closed state; mutable so switches can be toggled
+- `normamps`, `emergamps`: Current ratings, in amperes as parsed and in pu after `parse_file`
 """
 mutable struct LineDevice
     name::String
@@ -345,7 +352,8 @@ end
 """
     TransformerWinding(index, bus, conn, kv, kva, resistance, tap)
 
-Single transformer winding specification.
+One transformer winding: `index` (1-based), terminal `bus`, connection `conn`
+(`:wye` or `:delta`), rated `kv` and `kva`, `resistance` (`%R`), and `tap` (pu).
 """
 struct TransformerWinding
     index::Int
@@ -360,7 +368,10 @@ end
 """
     RegControl(...)
 
-Parsed OpenDSS regulator control settings attached to a transformer.
+Voltage-regulator control settings from an OpenDSS `RegControl`, attached to the
+transformer named by `transformer`: regulated `winding`, target `vreg`, `band`,
+PT/CT ratios (`ptratio`, `ctprim`), line-drop compensation (`r`, `x`), and
+whether the control is `enabled`.
 """
 struct RegControl
     name::String
@@ -379,21 +390,20 @@ end
 """
     TransformerDevice(...)
 
-Transformer element with winding data and optional regulator control metadata.
+Transformer with its windings and, for voltage regulators, the control settings.
 
 Fields:
 - `name`: Transformer identifier
-- `phases`: Phase indices
-- `windings`: Vector of winding specifications
-- `xhl_percent`: Reactance between windings 1-2 (%)
-- `xht_percent`: Reactance between windings 1-3 (%), for 3+ winding transformers
-- `xlt_percent`: Reactance between windings 2-3 (%), for 3+ winding transformers
+- `phases`: Phase numbers
+- `windings`: `TransformerWinding` entries (two or three supported)
+- `xhl_percent`: Leakage reactance between windings 1 and 2 (%)
+- `xht_percent`, `xlt_percent`: Leakage reactance for pairs 1–3 and 2–3 (%); used by three-winding transformers only
 - `percent_loadloss`: Copper loss at rated power (%)
 - `percent_noloadloss`: Core loss at no load (%)
 - `percent_imag`: Magnetizing current (%)
-- `is_regulator`: True if this is a voltage regulator
-- `regcontrol`: Associated RegControl settings (if any)
-- `provenance`: Source file information
+- `is_regulator`: `true` for a voltage regulator
+- `regcontrol`: Associated `RegControl`, or `nothing`
+- `provenance`: Where the transformer was defined
 """
 struct TransformerDevice
     name::String
@@ -420,7 +430,8 @@ end
 """
     CapacitorDevice(...)
 
-Shunt capacitor element definition.
+Shunt capacitor bank: terminal `bus`, `phases`, per-phase `kvar`, rated `kv`,
+and connection `conn` (`:wye` or `:delta`).
 """
 struct CapacitorDevice
     name::String
@@ -432,27 +443,26 @@ struct CapacitorDevice
     provenance::Provenance
 end
 
+const DEFAULT_PV_COST_COEFF = Float64[0.1, 5.0, 0.0]
+
 """
     GeneratorDevice(...)
 
-Generic distributed energy resource (DER) with connection info and OPF-ready parameters.
-All power/current values are in per-unit on system base quantities.
+Distributed energy resource (PV, wind, diesel, battery, ...) with the limits and
+cost data needed for OPF. Power values are in per-unit on the system base.
 
 Fields:
 - `name`: Generator identifier
 - `bus`, `phases`, `conn`, `kv`: Electrical connection
-- `p_pu`: Active power injection setpoint/availability (pu on Sbase)
-- `pf`: Power factor (signed: + lagging, - leading)
-- `kva_pu`: Apparent power rating (pu on Sbase) — inverter/interconnection capacity
-- `qmax_pu`: Maximum reactive power injection (pu on Sbase)
-- `qmin_pu`: Minimum reactive power injection (pu on Sbase)
+- `p_pu`: Active power setpoint or availability (pu on `Sbase`)
+- `pf`: Power factor (positive lagging, negative leading)
+- `kva_pu`: Apparent power rating, i.e. inverter capacity (pu on `Sbase`)
+- `qmin_pu`, `qmax_pu`: Reactive power limits (pu on `Sbase`)
 - `vminpu`, `vmaxpu`: Voltage operating limits (pu)
-- `cost_coeff`: Objective function coefficients for the feeder cost curve
+- `cost_coeff`: Cost-curve coefficients (PVs parsed from DSS default to `DEFAULT_PV_COST_COEFF`)
 - `generator_type`: `:pv`, `:wind`, `:diesel`, `:battery`, etc.
-- `provenance`: Source file information (contains physical values in original_properties)
+- `provenance`: Where the generator was defined; the original (unconverted) values are kept in `original_properties`
 """
-const DEFAULT_PV_COST_COEFF = Float64[0.1, 5.0, 0.0]
-
 struct GeneratorDevice
     name::String
     bus::TerminalSpec
@@ -498,8 +508,11 @@ end
 """
     LoadDevice(...)
 
-Load element definition with connection type, OpenDSS model code, and power data.
-All power values are in per-unit on system base quantities.
+Load with its connection type, OpenDSS load `model` code (1–5), and demand
+(`p_pu`, `q_pu`, per-unit on the system base). `vminpu`/`vmaxpu` set the voltage
+band in which the model applies as specified, and `cvrwatts`/`cvrvars`
+are the CVR exponents used by model 4. See `load_currents` for how each model behaves
+outside the voltage band.
 """
 struct LoadDevice
     name::String
@@ -525,7 +538,8 @@ end
 """
     NetworkModel(...)
 
-Parsed feeder model containing component tables, base quantities, and provenance.
+Parsed feeder: bus and component tables, the source/slack definition, system
+base quantities, and parse provenance. Built by `parse_file`.
 """
 struct NetworkModel
     buses::ComponentTable{BusSpec}
@@ -545,8 +559,14 @@ end
 """
     YBusModel(...)
 
-Assembled nodal admittance model with network/slack partitions and node order maps.
-`YL` stores constant-impedance load admittance contributions.
+Nodal admittance model built by `build_y`.
+
+- `Ynet`: Full admittance matrix, with network nodes first and slack nodes last
+- `Y`, `Y_NS`, `Y_SS`: Blocks of `Ynet` — network–network, network–slack, and slack–slack
+- `network_order`, `slack_order`, `all_order`: Node ordering; `all_order` is network nodes followed by slack nodes
+- `network_index`, `all_index`: Row lookup by `BusPhase`
+- `available_phases`: Phases present at each bus
+- `YL`: Constant-impedance load admittances from `build_load_model`
 """
 struct YBusModel
     Ynet::SparseMatrixCSC{ComplexF64,Int}
@@ -565,7 +585,8 @@ end
 """
     NoLoadResult(slack, w, phase_voltages)
 
-No-load voltage solution for network and slack nodes.
+No-load voltage solution: the fixed `slack` voltages, the solved network voltages
+`w`, and all of them keyed by `BusPhase` in `phase_voltages`.
 """
 struct NoLoadResult
     slack::Vector{ComplexF64}
@@ -588,7 +609,8 @@ end
 """
     LoadModel(contributions, YL, summary)
 
-Nonlinear load current operators plus constant-impedance load admittance stamps.
+Load model for the solver: nonlinear current-injection `contributions`, constant-impedance
+admittances `YL`, and a `summary` count of loads by type.
 """
 struct LoadModel
     contributions::Vector{LoadContribution}
@@ -599,7 +621,13 @@ end
 """
     PowerFlowResult(...)
 
-Power-flow solve summary including convergence metadata and solved voltages.
+Power-flow solution.
+
+- `iterations`, `converged`: Iteration count and whether the tolerance was met
+- `voltages`: Complex voltages in `all_order` (network then slack nodes)
+- `phase_voltages`: The same voltages keyed by `BusPhase`
+- `magnitudes`, `angles_deg`: Magnitude and angle of `voltages`
+- `history`: Residual (∞-norm) after each iteration
 """
 struct PowerFlowResult
     iterations::Int
@@ -614,10 +642,12 @@ end
 """
     AnalysisBundle(network, ybus, noload, loads, result)
 
-End-to-end analysis artifact combining parsed input, assembled models, and solution.
-The `result` field always contains system-wide per-unit voltages.
-The optional `normalized_result` field is retained for API compatibility and,
-under single-base operation, is either `nothing` or equivalent to `result`.
+Everything produced by a solve: the parsed `network`, the `ybus`, the `noload`
+solution, the `loads` model, and the power-flow `result`.
+
+`result` uses one system-wide per-unit base. `normalized_result` holds the same
+voltages on each bus's local base, or is `nothing` if not computed; use
+`get_normalized_result` to read whichever is available.
 """
 struct AnalysisBundle
     network::NetworkModel
