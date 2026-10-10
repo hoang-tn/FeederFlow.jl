@@ -339,8 +339,11 @@ end
 """
     load_injection_current(value, voltage, voltage_pu, vminpu, vmaxpu) -> ComplexF64
 
-Constant-power load current. Outside the OpenDSS voltage band, keep constant P/Q
-rather than a ZIP surrogate `conj(S/V_nom^2)*V`, which is unstable when |V| grows.
+Constant-power current `conj(S / V)`.
+
+The voltage-band arguments are unused: the load stays constant-P/Q even outside
+the OpenDSS band, because a constant-impedance surrogate `conj(S / V_nom^2) * V`
+is unstable when |V| grows.
 """
 function load_injection_current(value::ComplexF64, voltage::ComplexF64, ::Float64,
                                 ::Float64, ::Float64)

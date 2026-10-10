@@ -1,8 +1,13 @@
 """
     build_y(network; regulator_model=:nonideal, epsilon=1e-6)
 
-Assemble the feeder nodal admittance partitions (`Y`, `Y_NS`, `Y_SS`) and node
-order/index maps as a `YBusModel`.
+Assemble the feeder nodal admittance matrix as a `YBusModel`: the full matrix,
+its network/slack blocks (`Y`, `Y_NS`, `Y_SS`), and the node ordering and index maps.
+
+# Arguments
+- `network`: parsed `NetworkModel`
+- `regulator_model`: `:nonideal` keeps regulator series impedance; `:ideal` replaces it with `im * epsilon`
+- `epsilon`: small regularization for transformer and regulator impedances (default `1e-6`)
 """
 function build_y(network::NetworkModel; regulator_model::Symbol = :nonideal, epsilon::Float64 = 1e-6)
     excluded = excluded_buses(network)
@@ -79,10 +84,11 @@ end
 """
     excluded_buses(network)
 
-Return set of buses to exclude from Y-bus assembly.
-For the main DSS path, only open switch buses are excluded to avoid singular
-isolated nodes. Regulator secondary buses remain in the network and are stamped
-through the generic transformer model.
+Return the buses to leave out of the Y-bus.
+
+Only buses isolated by open switches are excluded, since they would make the
+matrix singular. Regulator secondary buses stay in and are stamped like any
+other transformer winding.
 """
 function excluded_buses(network::NetworkModel)
     excluded = Set{String}()
@@ -181,12 +187,9 @@ end
 """
     unit_to_kft(units::String) -> Float64
 
-Convert OpenDSS length unit to equivalent kft (1000 feet) multiplier.
-This normalizes all length units to a common basis for impedance calculations.
-
-OpenDSS linecode units: mi, kft, km, m, ft, in, cm, none
-- "none" means values are already per-unit-length (multiplier = 1.0)
-- Other units convert to kft basis
+Return the number of kft (1000 ft) in one `units`, so lengths in any OpenDSS
+unit (`mi`, `kft`, `km`, `m`, `ft`, `in`, `cm`) can be put on a common basis.
+`"none"` means the values are already per unit length and gives `1.0`.
 """
 function unit_to_kft(units::String)
     u = lowercase(units)
@@ -214,10 +217,10 @@ end
 """
     line_admittance(line; include_shunt=true, ybase=1.0) -> (yseries, yshunt)
 
-Series and shunt admittance blocks for a line segment.
+Series and shunt admittance blocks of a line, in per unit.
 
-`z = (R + jX) * length` on the linecode impedance base; `yseries = z⁻¹ / ybase`.
-Shunt uses `j 2π f C length` with `C` in nF, also divided by `ybase`.
+The series impedance is `z = (R + jX) * length` and `yseries = inv(z) / ybase`.
+The shunt admittance is `j 2π f C * length` (with `C` in nF), also divided by `ybase`.
 """
 function line_admittance(line::LineDevice; include_shunt::Bool = true, ybase::Float64 = 1.0)
     # Total impedance = per-unit-length * effective length.
@@ -524,14 +527,12 @@ end
 """
     open_delta_regulator_groups(network)
 
-Identify open-delta regulator groups in the network topology.
+Find open-delta regulator groups in the network.
 
-An open-delta group consists of two single-phase regulators (one on phases
-AB, one on phases BC) sharing the same primary bus, with a single downstream
-line from the secondary bus. Returns an array of `NamedTuple`s with
-`primary`, `secondary`, `remote`, `line`, `bridge_lines`, and `transformers`.
-
-Returns empty array if no matching topology is found.
+A group is two single-phase regulators (one on phases AB, one on BC) that share a
+primary bus and feed a single downstream line from their secondary bus. Returns a
+vector of `NamedTuple`s with fields `primary`, `secondary`, `remote`, `line`,
+`bridge_lines`, and `transformers`; the vector is empty if there are none.
 """
 function open_delta_regulator_groups(network::NetworkModel)
     groups = Dict{String,Vector{TransformerDevice}}()
@@ -593,10 +594,11 @@ end
 """
     kron_reduce_partition(matrix, keep, eliminate; singular_tol=1e-11)
 
-Schur complement / Kron reduction: `Ykk - Yke * Yee⁻¹ * Yek`.
+Kron reduction (Schur complement) of `matrix`: `Ykk - Yke * Yee⁻¹ * Yek`, where
+`k` indexes the nodes to `keep` and `e` those to `eliminate`.
 
-Used to eliminate internal open-delta regulator secondary nodes when stamping an
-equivalent two-port admittance between primary and remote buses.
+Used to remove the internal secondary nodes of open-delta regulators, leaving an
+equivalent admittance between the primary and remote buses.
 """
 function kron_reduce_partition(matrix::AbstractMatrix{<:Complex}, keep::Vector{Int}, eliminate::Vector{Int}; singular_tol::Float64 = 1e-11)
     Y = Matrix{ComplexF64}(matrix)

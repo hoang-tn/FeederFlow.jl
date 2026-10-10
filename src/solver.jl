@@ -1,12 +1,13 @@
 """
     compute_no_load(ybus; v_slack=balanced_slack())
 
-Solve the no-load linear system `Y * w = -Y_NS * v_slack` to find network
-node voltages when all load currents are zero.
+Solve the no-load voltages: with all load currents zero, the network voltages
+`w` satisfy `Y * w = -Y_NS * v_slack`.
 
-The slack bus voltages are fixed by `v_slack` (default: balanced three-phase
-at 1.0 pu). Returns both the network voltages `w` and the combined phase
-voltage dictionary.
+The slack voltages are fixed at `v_slack` (default: balanced three-phase, 1.0 pu).
+Returns a `NoLoadResult` holding `v_slack`, `w`, and a `BusPhase`-keyed voltage dictionary.
+
+If `Y` is singular, a small diagonal shift (`1e-6`) is added and the system is re-solved.
 """
 function compute_no_load(ybus::YBusModel; v_slack::Vector{ComplexF64} = balanced_slack())
     rhs = ybus.Y_NS * v_slack
@@ -36,7 +37,7 @@ function compute_no_load(ybus::YBusModel; v_slack::Vector{ComplexF64} = balanced
     return NoLoadResult(v_slack, w, phase_voltages)
 end
 
-"""Concatenate network and slack phase voltages in `ybus.all_order` layout."""
+"""Concatenate network and slack voltages in `ybus.all_order` layout (network first)."""
 function full_voltage_vector(ybus::YBusModel, v_network::Vector{ComplexF64}, v_slack::Vector{ComplexF64})
     return vcat(v_network, v_slack)
 end
@@ -44,10 +45,8 @@ end
 """
     normalize_voltage_to_bus_base(v, bp, base)
 
-Compatibility helper for legacy callers.
-
-FeederFlow now uses one global system base (MATLAB-style), so this returns the
-input voltage unchanged.
+Compatibility stub for legacy callers. FeederFlow solves on a single global
+per-unit base, so `v` is returned unchanged.
 """
 function normalize_voltage_to_bus_base(v::ComplexF64, bp::BusPhase, base::BaseQuantities)
     return v
@@ -56,10 +55,11 @@ end
 """
     normalize_result_to_local_bases(result, network, all_order) -> PowerFlowResult
 
-Express voltages in each bus's local per-unit base (`BusSpec.vbase` LN volts).
+Re-express voltages in each bus's local per-unit base (`BusSpec.vbase`, line-to-neutral volts).
 
-Global Y-bus quantities use `network.base.Vbase`; local pu is
-`|V|_local = |V|_global * (Vbase_global / Vbase_bus)`.
+The solver works on the global base `network.base.Vbase`, so each voltage is
+scaled by `Vbase_global / Vbase_bus`. Buses without a known `vbase` keep the
+global base.
 """
 function normalize_result_to_local_bases(result::PowerFlowResult,
                                          network::NetworkModel,
@@ -90,15 +90,16 @@ end
 """
     analyze_network_once(network; method=:zbus, max_iter=10, tol=1e-5)
 
-Assemble Y-bus, solve no-load voltages, build load models, run power flow,
-and compute regulator secondary voltages. Returns an `AnalysisBundle`.
+Run the whole pipeline on a parsed network: build the Y-bus, solve the no-load
+voltages, build the load model, run the power flow, and add regulator secondary
+voltages. Returns an `AnalysisBundle`. This is what `solve_power_flow(network)` calls.
 
 # Arguments
-- `network`: parsed distribution network model
-- `method`: power flow method (only `:zbus` supported in v1)
-- `regulator_model`: `:nonideal` (with series impedance) or `:ideal` (zero impedance)
-- `epsilon`: small numerical regularization parameter
-- `max_iter`, `tol`: Z-bus solver convergence parameters
+- `network`: parsed `NetworkModel`
+- `method`: solver method (only `:zbus` is supported)
+- `regulator_model`: `:nonideal` (keep series impedance) or `:ideal` (negligible impedance)
+- `epsilon`: small regularization added to transformer and regulator impedances
+- `max_iter`, `tol`: iteration limit and residual tolerance for the Z-bus solver
 """
 function analyze_network_once(network::NetworkModel; method::Symbol = :zbus, regulator_model::Symbol = :nonideal, epsilon::Float64 = 1e-5, max_iter::Int = 10, tol::Float64 = 1e-5)
     ybus = build_y(network; regulator_model, epsilon)
@@ -130,9 +131,8 @@ end
 """
     get_normalized_result(bundle) -> PowerFlowResult
 
-Return the canonical power-flow result.
-
-Returns local-bus-base per-unit voltages when available; otherwise the global-base result.
+Return the power-flow result to use for reporting: voltages in each bus's local
+per-unit base if they were computed, otherwise the global-base `bundle.result`.
 """
 function get_normalized_result(bundle::AnalysisBundle)
     bundle.normalized_result === nothing ? bundle.result : bundle.normalized_result
@@ -141,15 +141,18 @@ end
 """
     get_voltages_local_base(bundle)
 
-Deprecated alias for `get_normalized_result`.
+Deprecated alias of `get_normalized_result`.
 """
 get_voltages_local_base(bundle::AnalysisBundle) = get_normalized_result(bundle)
 
 """
     solve_power_flow(bundle; method=:zbus, max_iter=10, tol=1e-5)
 
-Run fixed-point Z-bus iterations using the preassembled analysis bundle and
-return a `PowerFlowResult`.
+Run the Z-bus iteration on a pre-assembled `AnalysisBundle` and return a `PowerFlowResult`.
+
+Each iteration solves `(Y + YL) v = -I_load(v) - Y_NS * v_slack`, starting from the
+no-load voltages. It stops when the infinity norm of the residual is at most `tol`,
+or after `max_iter` iterations (check `converged` on the result).
 """
 function solve_power_flow(bundle::AnalysisBundle; method::Symbol = :zbus, max_iter::Int = 10, tol::Float64 = 1e-5)
     return solve_power_flow(bundle, method, max_iter, tol)
@@ -205,8 +208,10 @@ end
 """
     solve_power_flow(network; method=:zbus, regulator_model=:nonideal, epsilon=1e-5, max_iter=10, tol=1e-5)
 
-Build Y-bus and load operators from a parsed `NetworkModel`, solve power flow,
-and return an `AnalysisBundle`.
+Build the Y-bus and load model from a parsed `NetworkModel`, solve the power flow,
+and return an `AnalysisBundle` (call `get_normalized_result` on it for voltages).
+
+Defaults: `method=:zbus`, `regulator_model=:nonideal`, `epsilon=1e-5`, `max_iter=10`, `tol=1e-5`.
 """
 function solve_power_flow(network::NetworkModel; method::Symbol = :zbus, regulator_model::Symbol = :nonideal, epsilon::Float64 = 1e-5, max_iter::Int = 10, tol::Float64 = 1e-5)
     return analyze_network_once(network; method, regulator_model, epsilon, max_iter, tol)
@@ -217,7 +222,10 @@ end
                pv_cost_spread=0.5, apply_benchmark_regulator_taps=false,
                method=:zbus, regulator_model=:nonideal, epsilon=1e-5, max_iter=10, tol=1e-5)
 
-Convenience wrapper for parsing an OpenDSS master file and solving power flow.
+Parse an OpenDSS master file and solve its power flow in one call; returns an `AnalysisBundle`.
+
+The first five keywords are passed to `parse_file` and the rest to
+`solve_power_flow`; see those for their meaning.
 """
 function solve_case(path::AbstractString;
                     include_neutral::Bool = false,

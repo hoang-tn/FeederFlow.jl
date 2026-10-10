@@ -18,23 +18,10 @@ function DSSState()
 end
 
 """
-    strip_comment(line::String) -> String
+    strip_comment(line) -> String
 
-Remove OpenDSS comments from a line, preserving quoted strings.
-
-Comments in OpenDSS begin with `!` or `//` but only outside of quoted strings (single or double quotes).
-This function returns the line with the comment removed and whitespace trimmed.
-
-# Arguments
-- `line`: A line of DSS source code, potentially containing quoted strings and comments.
-
-# Returns
-The line with comment removed and whitespace trimmed. Returns an empty string if the entire line was a comment.
-
-# Details
-This function maintains a quote state machine to track whether the parser is inside a quoted region.
-It respects both single (`'`) and double (`"`) quotes equally. This is critical for parsing OpenDSS files
-where property values may contain special characters.
+Remove a trailing `!` or `//` comment from a DSS line, ignoring comment markers
+inside single or double quotes, and trim whitespace. A fully commented line gives `""`.
 """
 function strip_comment(line::AbstractString)
     stripped = strip(line)
@@ -60,10 +47,11 @@ function strip_comment(line::AbstractString)
 end
 
 """
-    strip_block_comments(line::String, in_block::Bool) -> (String, Bool)
+    strip_block_comments(line, in_block) -> (String, Bool)
 
-Remove C-style block comments (`/* ... */`) while preserving parser state when a
-comment spans multiple lines.
+Remove `/* ... */` block comments from `line`. `in_block` says whether the line
+starts inside a comment from an earlier line; the returned `Bool` says whether it
+ends inside one.
 """
 function strip_block_comments(line::AbstractString, in_block::Bool)
     text = String(line)
@@ -94,28 +82,11 @@ function strip_block_comments(line::AbstractString, in_block::Bool)
 end
 
 """
-    tokenize_dss(text::String) -> Vector{String}
+    tokenize_dss(text) -> Vector{String}
 
-Tokenize an OpenDSS command respecting quoted strings and nested brackets/parentheses.
-
-Splits text on whitespace while preserving multi-word tokens enclosed in quotes or brackets.
-Maintains nesting depth for square brackets `[]` and parentheses `()` to avoid splitting
-matrix literals and tuple-like syntax.
-
-# Arguments
-- `text`: A DSS command text, typically a single logical line (after comment stripping).
-
-# Returns
-A vector of tokens as strings. Quotes and brackets are preserved in the output.
-
-# Details
-The tokenizer maintains three state machines:
-1. Quote state for single and double quotes (respects quote pairing)
-2. Square bracket depth (for matrices and literal arrays)
-3. Round bracket depth (for tuple-like expressions)
-
-Tokens are only split on whitespace when all these depths are zero and not inside quotes.
-Empty tokens are discarded. This preserves the structure needed for later parsing of complex values.
+Split a DSS command on whitespace into tokens. Whitespace inside quotes, `[...]`,
+or `(...)` does not split, so matrix and array literals stay in one token. Quotes
+and brackets are kept in the output.
 """
 function tokenize_dss(text::AbstractString)
     tokens = String[]
@@ -157,23 +128,10 @@ function tokenize_dss(text::AbstractString)
 end
 
 """
-    split_literal_rows(text::String) -> Vector{String}
+    split_literal_rows(text) -> Vector{String}
 
-Split matrix literal rows by the `|` delimiter while respecting quoted strings.
-
-Used by the matrix literal parser to separate rows of a multi-row matrix definition.
-The `|` delimiter only marks a row boundary when outside quotes.
-
-# Arguments
-- `text`: Inner text of a matrix literal (content between `[]` or `()` brackets).
-
-# Returns
-A vector of row strings, each trimmed of whitespace.
-
-# Details
-This function is a simpler variant of `tokenize_dss` specialized for row splitting.
-It maintains only a quote state machine, ignoring brackets. The `|` character is used
-to separate rows in DSS matrix definitions.
+Split the inside of a matrix literal into rows at `|`, ignoring `|` inside quotes.
+Rows are trimmed.
 """
 function split_literal_rows(text::AbstractString)
     rows = String[]
@@ -197,28 +155,11 @@ function split_literal_rows(text::AbstractString)
 end
 
 """
-    parse_atom(token::String) -> Any
+    parse_atom(token) -> Union{String,Float64,Bool}
 
-Parse a single DSS token into its appropriate Julia value (string, float, bool, or raw text).
-
-Atoms are the primitive units: quoted strings become unquoted strings, numeric literals become Float64,
-and special keywords become booleans. Non-matching text is returned as-is.
-
-# Arguments
-- `token`: A tokenized DSS value (typically output from `tokenize_dss`).
-
-# Returns
-One of: `String` (unquoted), `Float64`, `Bool`, or the token as a `String` if unparseable.
-Empty tokens return empty strings.
-
-# Details
-Parsing order:
-1. Check for quoted strings (single or double quotes) → unescape and return
-2. Check for case-insensitive boolean keywords (`yes`/`no`) → return `true`/`false`
-3. Attempt `parse(Float64, ...)` → return numeric value
-4. Default → return token as raw string
-
-This function is case-insensitive for booleans but preserves case for string values.
+Convert one DSS token to a Julia value: a quoted token becomes its unquoted string,
+`yes`/`no` (any case) become `true`/`false`, a number becomes a `Float64`, and
+anything else is returned as a string.
 """
 function parse_atom(token::AbstractString)
     text = strip(token)
@@ -257,26 +198,13 @@ function parse_bool(value::Any, default::Bool)
 end
 
 """
-    parse_literal(text::String) -> Any
+    parse_literal(text)
 
-Parse a DSS literal value: scalar, vector, or matrix into native Julia structures.
+Parse a DSS value that may be a scalar, a vector, or a matrix.
 
-Literals may be raw atoms, whitespace/comma-separated vectors in `[]` or `()`, or
-multi-row matrices separated by `|`. Returns appropriate nesting: scalar for single
-values, vector of floats if all numeric, or mixed vector/matrix for heterogeneous data.
-
-# Arguments
-- `text`: A DSS literal expression, potentially with brackets and row delimiters.
-
-# Returns
-- Scalar value (from `parse_atom`) if no brackets
-- `Vector{Any}` or `Vector{Vector{Float64}}` if bracketed
-- Empty `Any[]` if brackets are empty
-
-# Details
-Bracketed content is split into rows by `|`, and each row is tokenized and parsed into atoms.
-If all atoms in all rows are numeric (Float64), the result is promoted to `Vector{Vector{Float64}}`
-for matrices. This supports both OpenDSS matrix notation and simple vector lists.
+A plain value is parsed with `parse_atom`. A bracketed value (`[...]` or `(...)`) is
+split into rows at `|` and each row into atoms. All-numeric input gives a
+`Vector{Vector{Float64}}` (one inner vector per row); empty brackets give `Any[]`.
 """
 function parse_literal(text::AbstractString)
     stripped = strip(text)
@@ -294,24 +222,11 @@ function parse_literal(text::AbstractString)
 end
 
 """
-    resolve_path(basefile::String, target::String) -> String
+    resolve_path(basefile, target) -> String
 
-Resolve a `Redirect` or `Compile` target path as absolute, handling relative paths.
-
-If the target is an absolute path, it is normalized and returned. If relative, it is
-resolved relative to the directory of `basefile`. All quotes around the target are removed.
-
-# Arguments
-- `basefile`: The path of the DSS file containing the `Redirect`/`Compile` command.
-- `target`: The path string from the DSS command (may be quoted).
-
-# Returns
-An absolute, normalized path to the target file.
-
-# Details
-Uses `dirname()` to find the containing directory of `basefile` and `joinpath()` to
-construct the full path. The `normpath()` function resolves `..` and `.` components.
-All quote characters are removed from the target before resolution.
+Resolve the target of a `Redirect` or `Compile` command to a normalized absolute
+path. Relative targets are taken relative to the directory of `basefile`; quotes
+around `target` are removed.
 """
 function resolve_path(basefile::AbstractString, target::AbstractString)
     raw = strip(replace(target, "\"" => "", "'" => ""))
@@ -319,53 +234,23 @@ function resolve_path(basefile::AbstractString, target::AbstractString)
 end
 
 """
-    provenance_path(path::String) -> String
+    provenance_path(path) -> String
 
-Extract the filename (basename) of a path for use in provenance tracking.
-
-Used to record which DSS file a parsed object came from. Normalizes the path first
-to handle platform-specific separators and redundant components.
-
-# Arguments
-- `path`: A file path (absolute or relative).
-
-# Returns
-The filename only, without directory components.
-
-# Details
-This function is lightweight and used during parsing to populate the `Provenance`
-struct attached to each parsed object. It enables later tracing of which source file
-defined a particular load or transformer, useful for debugging and reproducibility.
+File name of `path`, stored in `Provenance` to record where an object was defined.
 """
 provenance_path(path::AbstractString) = basename(normpath(path))
 
 """
-    collect_commands(path::String; visited::Set{String} = Set()) -> Vector{(String,String,Int)}
+    collect_commands(path; visited=Set()) -> Vector{Tuple{String,String,Int}}
 
-Recursively collect all DSS commands from a file, resolving `Redirect`/`Compile` chains.
+Read a DSS file and return its commands as `(command, file, line)` tuples,
+following `Redirect` and `Compile` into the files they reference.
 
-Reads a DSS file, handles line continuations (lines starting with `~`), and follows
-`Redirect` and `Compile` directives to include commands from referenced files. Each
-command is returned with its source file and line number for error reporting.
+`~` continuation lines are merged into the preceding command. `visited` records the
+files already read, so circular includes are skipped. Commands are not interpreted here.
 
-# Arguments
-- `path`: The entry point DSS file.
-- `visited`: (Keyword, default `Set()`) Set of already-visited file paths to prevent cycles.
-
-# Returns
-A vector of tuples `(command, file, line)` where command is the DSS statement text,
-file is the absolute path of the source, and line is the 1-based line number.
-
-# Throws
-- `DSSParseError` if a continuation line (`~`) has no preceding command
-- `DSSParseError` if a `Redirect` or `Compile` is missing a target path
-
-# Details
-The parser maintains a `visited` set to prevent infinite loops from circular includes.
-Line continuations are merged into the preceding command before tokenization. This
-ensures that multi-line DSS expressions (e.g., impedance matrices) are treated as
-single commands. The function does not parse command semantics; it only extracts
-and flattens the file structure.
+Throws `DSSParseError` for a `~` line with no preceding command, or a `Redirect`/`Compile`
+without a target.
 """
 function collect_commands(path::AbstractString; visited = Set{String}())
     norm = normpath(path)
@@ -409,26 +294,11 @@ function collect_commands(path::AbstractString; visited = Set{String}())
 end
 
 """
-    copy_properties(properties::Dict{String,Any}) -> Dict{String,Any}
+    copy_properties(properties) -> Dict{String,Any}
     copy_properties(object::DSSObject) -> Dict{String,Any}
 
-Deep copy a property dictionary or extract properties from a DSSObject.
-
-Used during object inheritance (`Like` mechanism) and provenance tracking to ensure
-that modifications to properties don't affect the original or inherited base properties.
-
-# Arguments
-- `properties`: A property dictionary from a `DSSObject`
-- `object`: A `DSSObject` (calls `copy_properties(object.properties)`)
-
-# Returns
-A new dictionary with all values deep-copied.
-
-# Details
-This uses `deepcopy()` to ensure that nested structures (vectors, matrices) are
-fully cloned. This is critical when implementing the OpenDSS `Like` inheritance
-mechanism, where a new object copies all properties from a base object and then
-overlays edits.
+Deep copy of a property dictionary (or of a `DSSObject`'s properties). Used for `Like`
+inheritance and provenance, so later edits do not alter the original.
 """
 function copy_properties(properties::Dict{String,Any})
     copied = Dict{String,Any}()
@@ -441,24 +311,11 @@ end
 copy_properties(object::DSSObject) = copy_properties(object.properties)
 
 """
-    property_alias(properties::Dict{String,Any}, names...) -> Any
+    property_alias(properties, names...) -> Any
 
-Look up a property by multiple alternative names (case-insensitive fallback).
-
-OpenDSS properties may be referenced by different capitalization variants or short names.
-This utility checks each name in order, normalized to lowercase, and returns the first match found.
-
-# Arguments
-- `properties`: A DSS object property dictionary
-- `names...`: One or more property name variants to try (as strings)
-
-# Returns
-The value of the first property name found in the dictionary, or `nothing` if none match.
-
-# Details
-Property keys in the dictionary are expected to be stored in lowercase (as per `normalize_key`).
-Each input name is lowercased before lookup. This provides a robust way to handle OpenDSS
-property name variability while keeping the internal property store consistent.
+Value of the first of `names` found in `properties` (names are lowercased before
+lookup), or `nothing` if none is present. Handles properties that OpenDSS allows
+under several names.
 """
 function property_alias(properties::Dict{String,Any}, names::AbstractString...)
     for name in names
@@ -469,44 +326,18 @@ function property_alias(properties::Dict{String,Any}, names::AbstractString...)
 end
 
 """
-    normalize_key(text::String) -> String
+    normalize_key(text) -> String
 
-Normalize a DSS property key to canonical form: lowercase, `%` → `pct`.
-
-OpenDSS uses inconsistent capitalization for properties and sometimes expresses percentages
-with the `%` symbol (e.g., `%R`) instead of spelled-out names (e.g., `pctR`).
-This function canonicalizes keys for consistent dictionary lookup.
-
-# Arguments
-- `text`: A property name from DSS source, potentially with `%`, mixed case, whitespace.
-
-# Returns
-A lowercase, trimmed key with `%` replaced by `pct`.
-
-# Details
-This is a lightweight canonicalization applied to all property keys during parsing
-to ensure dictionary lookups are case-insensitive and percent-sign notation is unified.
+Canonical property key: trimmed, lowercase, with `%` replaced by `pct` (`%R` becomes `pctr`).
 """
 function normalize_key(text::AbstractString)
     lowercase(strip(replace(text, "%" => "pct")))
 end
 
 """
-    normalize_linecode_name(value::Any) -> Union{String,Nothing}
+    normalize_linecode_name(value) -> Union{String,Nothing}
 
-Normalize a linecode name reference, handling numeric or string inputs.
-
-Linecodes are referenced by name in `Line` objects. This function normalizes the
-reference and returns `nothing` if the input is already `nothing` (no linecode specified).
-
-# Arguments
-- `value`: A linecode name (string, number) or `nothing`.
-
-# Returns
-A normalized name string, or `nothing` if input is `nothing`.
-
-# Details
-Uses `normalize_name()` from utils to apply standard DSS name canonicalization.
+Canonical form of a linecode reference (see `normalize_name`), or `nothing` if no linecode is given.
 """
 function normalize_linecode_name(value)
     value === nothing && return nothing
@@ -514,27 +345,11 @@ function normalize_linecode_name(value)
 end
 
 """
-    assign_property!(object::DSSObject, key::String, value::Any; winding::Union{Nothing,Int}=nothing) -> DSSObject
+    assign_property!(object, key, value; winding=nothing) -> DSSObject
 
-Assign a property to a DSS object, supporting both object-level and winding-specific properties.
-
-For transformer windings, properties are stored in a special `__windings__` dictionary keyed by
-winding index. For all other properties, they are stored at the object level.
-
-# Arguments
-- `object`: The `DSSObject` to modify (mutated in-place)
-- `key`: The property name (should be normalized)
-- `value`: The property value
-- `winding`: (Keyword, default `nothing`) If set to an integer, store in winding-specific dict
-
-# Returns
-The modified `object` (for chaining).
-
-# Details
-Winding-specific properties are collected in `__windings__` to support transformers with multiple
-windings defined via `wdg=...` prefixes. Each winding index maps to its own property dictionary.
-Object-level properties are stored directly. This dual storage enables later reconstruction of
-per-winding objects like `TransformerWinding`.
+Set a property on a `DSSObject` and return it. With `winding` set to an integer, the
+property is stored under that winding index in `object.properties["__windings__"]`
+(for transformer `wdg=` properties); otherwise it is stored on the object itself.
 """
 function assign_property!(object::DSSObject, key::String, value::Any; winding::Union{Nothing,Int} = nothing)
     if winding === nothing
@@ -1574,40 +1389,33 @@ end
 """
     parse_file(path; include_neutral=false, randomize_pv_cost=false, pv_cost_seed=12345, pv_cost_spread=0.5, apply_benchmark_regulator_taps=false)
 
-Parse an OpenDSS feeder entry file into a `NetworkModel`.
+Parse an OpenDSS master file into a `NetworkModel`.
 
-The parser resolves `Redirect`/`Compile` chains, normalizes object names and
-properties, collects component provenance, and infers per-unit base quantities.
+Follows `Redirect`/`Compile` chains, normalizes object names and properties,
+records where each component was defined (`Provenance`), converts power and
+current values to per unit, and infers the system and per-bus voltage bases.
 
 # Arguments
-- `path`: Path to the OpenDSS Master.dss file
+- `path`: Path to the OpenDSS master file (e.g. `Master.dss`).
 
-# Keyword Arguments
-- `include_neutral::Bool = false`: Controls neutral phase handling
-  - `false` (default): Filter phase 0 from bus phases. Neutral is treated as ground (V=0).
-    This is the standard 3-wire model for distribution feeders.
-  - `true`: Keep phase 0 for explicit 4-wire modeling with neutral conductor.
-- `randomize_pv_cost::Bool = false`: When true, assign each PV a distinct cost curve by
-  uniform multiplicative jitter around `DEFAULT_PV_COST_COEFF`.
-- `pv_cost_seed::Integer = 12345`: RNG seed for reproducible PV cost randomization.
-- `pv_cost_spread::Real = 0.5`: Half-width of uniform jitter; each coefficient is scaled by
-  `U(1 - spread, 1 + spread)`.
-- `apply_benchmark_regulator_taps::Bool = false`: When true, apply feeder-specific regulator
-  tap overrides used in internal benchmark cases (for example IEEE 8500).
-
-The filtering happens in `add_bus_phases!` which is called for all buses.
-When disabled, loads connect to neutral via `(phase, 0)` pairs with implicit ground reference.
+# Keywords
+- `include_neutral = false`: How to treat the neutral (phase 0).
+  - `false`: drop phase 0 and treat the neutral as ground (the usual 3-wire model).
+  - `true`: keep phase 0 in the parsed terminals. The Y-bus still models phases 1–3
+    only, and a warning is logged.
+- `randomize_pv_cost = false`: Give each PV its own cost curve by scaling every
+  coefficient of `DEFAULT_PV_COST_COEFF` by a random factor.
+- `pv_cost_seed = 12345`: Random seed, so randomized costs are reproducible.
+- `pv_cost_spread = 0.5`: Each factor is drawn uniformly from `1 ± spread`.
+- `apply_benchmark_regulator_taps = false`: Apply the feeder-specific regulator tap
+  overrides used by the internal benchmark cases (e.g. IEEE 8500).
 
 # Example
 ```julia
-# Default 3-wire model (neutral = ground)
 network = parse_file("Master.dss")
 
-# 4-wire model with explicit neutral node
-network = parse_file("Master.dss"; include_neutral=true)
-
-# Fixed default PV cost coefficients
-network = parse_file("Master.dss"; randomize_pv_cost=false)
+# Random but reproducible PV cost curves
+network = parse_file("Master.dss"; randomize_pv_cost = true, pv_cost_seed = 1)
 ```
 """
 function parse_file(
